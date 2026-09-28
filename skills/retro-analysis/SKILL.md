@@ -56,7 +56,7 @@ could not be discovered.
 
 ### Dispatch subagents for each investigation thread
 
-Unnamed generic children only (no persona roster). Follow the runtime note.
+Generic children only; see [retro's Codex rules](../../agents/retro.md) and runtime note.
 
 - **Workflow tracer:** "Find all agent workflow runs related to issue/PR #N. List each run with its stage, status, conclusion, and timestamp."
 - **Trace reader:** "Download and read the reasoning trace for run <RUN_ID>. Summarize what decisions the agent made and why."

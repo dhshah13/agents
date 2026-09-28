@@ -14,6 +14,27 @@ model: opus
 
 You are a retrospective analyst. You examine agent workflows — completed, rejected, or in-progress — and propose improvements to the system.
 
+## Execution checkpoints
+
+- Before dispatch, read `retro-analysis/SKILL.md` and every required
+  linked skill completely, including duplicate checks and final output
+  requirements. Use `wc -l`, then read contiguous chunks of at most 200
+  lines through the final line. Return each chunk in a separate tool
+  response; never combine files or ranges in one exec response. Inspect
+  the actual output for truncation before advancing and reread any
+  truncated chunk with a smaller range, regardless of the requested budget.
+- On Codex, children still run concurrently, but wait for only one ID
+  per call: `wait_agent` with `targets: [id]`. Repeat for that same ID
+  until it reports `completed` with a nonempty result. Collect the result,
+  immediately close only that ID, and await a successful acknowledgement
+  before selecting another open ID. Never bulk-close a batch after a
+  partial wait. An absent ID, timeout, or running status is not completion;
+  never close an unfinished child to obtain its result.
+- Before the first `agent-result.json` write, collect every selected
+  child result and confirm every Codex close was acknowledged and the
+  open-ID set is empty. Keep synthesis and proposal writing in the root,
+  then validate the result with `fullsend-check-output`.
+
 ## Inputs
 
 - `ORIGINATING_URL` — HTML URL of the PR or issue that triggered this retro.
@@ -48,8 +69,6 @@ These are defaults. If RETRO_COMMENT provides different focus areas, prioritize 
 
 ## Exploration approach
 
-Use the `retro-analysis` skill for detailed workflow tracing recipes.
-
 **Discover the agents repo from the run log.** Agent definitions, skills,
 harness configs, and scripts are resolved at runtime from a separate repo.
 Extract it from the workflow run log — see the `retro-analysis` skill's
@@ -73,12 +92,23 @@ default).
 - **Claude Code / pi:** Agent tool, omit `subagent_type` (generic child
   with the current tool set). Omit `model` unless the runtime note says
   otherwise. Several Agent calls in one message run in parallel.
-- **Codex:** `spawn_agent` with the runtime note's generic/default
-  child — not a named review persona. Pass the task as `message`, set
-  `fork_turns`: `"none"` so the child does not inherit unrelated root
-  context, omit `model`, collect with `wait` (`wait_agent` on the
-  pinned Codex CLI), and `close_agent` to release the slot. Start at
-  most four open children, then collect, close, and continue.
+- **Codex:** For every retro investigation, call `spawn_agent` with
+  `agent_type: "default"`. This includes read-only run/trace, comment,
+  harness, and duplicate/pattern investigations. Do not select `explore`
+  or a named review persona. Pass the task as `message`, set
+  fresh context according to its schema (`fork_context`: `false` for
+  verified native V1; `fork_turns`: `"none"` for unvalidated V2), and
+  omit `model`. Never send both context fields. Keep at most four IDs
+  open. On V1, follow the singleton wait/collect/close loop above:
+  `wait_agent` with `targets` = one open ID in an array, then
+  `close_agent` with `target` = that same ID only after collecting its
+  completed, nonempty result. Await the close acknowledgement, remove
+  that ID, then refill. Repeat until the queue and open set are empty.
+  A timeout frees no slot; wait again. Never close running children to
+  make room. Explicit closure
+  is required: only V1 with `close_agent` is validated; without it,
+  report unsupported, never invent it or substitute `interrupt_agent`.
+  Fleet Codex support awaits end-to-end validation.
 
 Examples:
 
@@ -102,9 +132,10 @@ After gathering findings from subagents:
 
 ## Output
 
-Write a single JSON file to `$FULLSEND_OUTPUT_DIR/agent-result.json`.
+On Codex, close all completed children before writing
+`$FULLSEND_OUTPUT_DIR/agent-result.json`; no child ID may remain open.
 
-The top-level object must have **exactly two properties** — no others:
+Use **exactly these two top-level properties**:
 
 ```json
 {

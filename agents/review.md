@@ -23,6 +23,65 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
 `sub-agents/{name}.md` files (Claude Code / pi: Agent tool; Codex:
 `spawn_agent` per the runtime note).
 
+## Execution checkpoints
+
+- Before discovering inputs, read only named, non-secret workflow
+  variables. Never dump `env`, `printenv`, or `set`, or select environment
+  values by a prefix such as `FULLSEND_*`; these can expose credentials
+  or security canaries. This lookup preserves unset versus empty values:
+
+  ```sh
+  python3 - <<'PY'
+  import json, os
+  names = (
+      "PR_URL", "PR_NUMBER", "REPO_FULL_NAME", "FULLSEND_OUTPUT_DIR",
+      "FULLSEND_FORGE", "PRIOR_REVIEW_SHA", "PRIOR_REVIEW_PROVENANCE",
+      "REVIEW_FINDING_SEVERITY_THRESHOLD", "REVIEW_PROTECTED_PATHS",
+      "REVIEW_RISK_ASSESSMENT_ENABLED", "REVIEW_GIT_FETCH_DEPTH",
+      "TIMEOUT_SECONDS", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
+  )
+  print(json.dumps({name: os.environ[name] for name in names if name in os.environ}))
+  PY
+  ```
+
+  Read any additional non-secret workflow input only by its exact
+  documented name. Scope content searches to the target checkout,
+  explicitly supplied PR/context files, and installed skill/persona
+  files. Never recursively search the workspace root or runtime
+  configuration/session directories. Read installed instructions via
+  their supplied skill paths. These boundaries do not exclude protected
+  files changed by the PR: inspect those within the target checkout or
+  supplied PR diff and retain all required protected-path findings.
+- Before dispatch, read the selected primary `SKILL.md` and its required
+  linked skills completely. For each file, use `wc -l` and first read its
+  final 200 lines with `tail -n 200` in a separate tool response so closing
+  constraints are available immediately. Then read contiguous chunks of
+  at most 200 lines through the final line, including a short final chunk.
+  Check the covered ranges against the line count; do not round it down
+  to a multiple of 200. Return each chunk in a separate tool response;
+  never combine files or ranges in one exec response.
+  Inspect the actual returned output for truncation before advancing;
+  reread any truncated chunk with a smaller range even if you requested a
+  larger output budget.
+  For `pr-review`, this includes protected-path checks, dispatch,
+  challenger, and final assembly. An opening excerpt is insufficient.
+- On Codex, children still run concurrently, but wait for only one ID
+  per call: `wait_agent` with `targets: [id]`. Repeat for that same ID
+  until it reports `completed` with a nonempty result. Collect the result,
+  immediately close only that ID, and await a successful acknowledgement
+  before selecting another open ID. Never bulk-close a batch after a
+  partial wait. An absent ID, timeout, or running status is not completion;
+  never close an unfinished child to obtain its result.
+- Retain completed child results by role. When risk assessment is enabled
+  and its child succeeds, include its returned object as `risk_assessment`
+  in the final JSON. Use the skill's risk-failure fallback only when that
+  child actually fails; do not discard its result while merging findings.
+- For the final Codex challenger, close it as the next operation after
+  collecting its completed result and await a successful acknowledgement.
+  Before the first `agent-result.json` write, confirm the open-ID set is
+  empty and the required root checks, including protected paths, are
+  finished. Then assemble the result and run `fullsend-check-output`.
+
 ## Inputs
 
 - `PR_URL` — the HTML URL of the PR/MR to review (e.g.,

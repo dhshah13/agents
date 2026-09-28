@@ -196,14 +196,13 @@ response directly.
 
 1. **Run Tier 1 script:**
    ```bash
-   bash "${CLAUDE_CONFIG_DIR}/skills/pr-risk-assessment/scripts/risk-tier1.sh"
+   bash "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:?Set CLAUDE_CONFIG_DIR or CODEX_HOME}}/skills/pr-risk-assessment/scripts/risk-tier1.sh"
    ```
-   Capture KEY=VALUE output. Parse each line and store signals.
+   Parse KEY=VALUE signals.
 
 2. **Evaluate Tier 1 dimensions:**
-   For each signal in the Tier 1 table, assign a 1-5 sub-score per the
-   scoring guidance. Compute the average of all valid sub-scores (skip
-   any `UNKNOWN` values). This is the Tier 1 composite score.
+   Score each signal 1-5 using the Tier 1 table. Average valid sub-scores
+   (skip `UNKNOWN`) for the Tier 1 composite.
 
 3. **Evaluate Tier 2 dimensions:**
    For each file in the PR's changed file list, run the git log

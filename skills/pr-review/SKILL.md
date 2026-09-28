@@ -463,16 +463,10 @@ incident.
    - **Pi, persona listed:** Agent tool, `subagent_type` =
      `security-triage`, no `model`.
    - **Pi, persona not listed:** keep `Explore`, omit `model`.
-   - **Codex, persona listed:** `spawn_agent` `agent_type`:
-     `security-triage`, `message` = composed prompt, `fork_turns`:
-     `"none"`. Collect with `wait` (`wait_agent` on the pinned CLI)
-     and `close_agent` before proceeding to step 3d — this pre-pass
-     must close its slot before step 4's four-slot batch opens.
-   - **Codex, persona not listed:** same `message` / `fork_turns` on
-     the note's generic/default child, then `wait` and `close_agent`
-     before proceeding to step 3d. Explore is instruction-only, not a
-     per-child read-only sandbox — accepted as this step's Codex
-     policy until fleet review/retro on Codex is supported.
+   - **Codex:** follow step 4's schema/support checks. Use `agent_type`:
+     `security-triage` when listed, otherwise the note's generic child;
+     `message` = composed prompt. Wait until terminal, collect, then
+     close before step 3d. Explore is instruction-only.
 
    This agent runs **synchronously** because its output feeds into
    step 3d. Classification does not require deep reasoning.
@@ -815,23 +809,25 @@ here):
    ```
 
 2. Spawn each selected sub-agent with the composed prompt from parts
-   1–5. Follow the runtime note when present. Codex has no `Agent`
-   tool and rejects Claude aliases — omit `model`; the runtime selects.
+   1–5. Follow the runtime note. On Codex, omit `model`; the runtime selects.
 
    - **Persona listed (pi):** Agent tool, `subagent_type` = persona
      `name:`, no `model`. Runner resolves from `agents[].subagents` and
      frontmatter; extra `model` is ignored; unlisted type is rejected.
    - **Persona listed (codex):** `spawn_agent` `agent_type` = that name,
-     `message` = composed prompt, `fork_turns`: `"none"`. Collect with
-     `wait` (`wait_agent` on the pinned CLI) and `close_agent`. `wait`
-     does not free a slot.
+     `message` = composed prompt. Fresh-context fields depend on the
+     schema: V1 `fork_context`: `false` (verified), V2 `fork_turns`:
+     `"none"` (unvalidated). Never send both. Explicit closure is
+     required: only V1 with `close_agent` is validated. Without it,
+     report unsupported; never invent it or substitute `interrupt_agent`.
+     Fleet support awaits end-to-end validation.
    - **No runtime note (Claude Code):** Agent tool, `model` from
      frontmatter (`opus` for `correctness`, `security`, `challenger`;
      `sonnet` otherwise), no `subagent_type`.
    - **Persona not listed (pi):** omit `subagent_type` and `model`;
      child uses this run's servable default.
-   - **Persona not listed (codex):** same `message` / `fork_turns` on
-     the note's generic/default child. Explore is instruction-only.
+   - **Persona not listed (codex):** apply these checks to the note's generic child.
+     Explore is instruction-only.
 
 **Schedule every selected task; bound open children by runtime.**
 Include 3c-2 risk-assessment in the selected set when enabled.
@@ -839,9 +835,12 @@ Include 3c-2 risk-assessment in the selected set when enabled.
 - **Claude Code / pi:** all selected Agent calls in one message. Leave
   `run_in_background` unset (Time budget notifications; `false`
   blocks). Pi queues beyond its cap.
-- **Codex:** start at most four, `wait`/`close_agent` completed
-  children, then the rest. After those slots close, step 6d launches
-  the challenger when the skip rule does not apply.
+- **Codex V1:** keep at most four IDs open. `wait_agent` with `targets`
+  = open IDs returns on any completion or timeout. Collect and
+  `close_agent` with `target` = ID only for terminal children; remove
+  closed IDs and refill. Repeat until queue/open set are empty. A
+  timeout frees no slot; wait again. Never close running children to
+  make room. Then apply step 6d's challenger skip rule.
 
 Wait for all selected sub-agents to complete; apply the Time budget
 checkpoint as each returns.
@@ -953,8 +952,7 @@ is non-empty (see the skip rule below) — dispatch the `challenger`
 sub-agent to adversarially challenge the findings with fresh context.
 The challenger has not seen the orchestrator's synthesis — it receives
 only the raw findings and the diff, preserving context isolation. On
-Codex, spawn only after step 4 children are closed (`fork_turns`:
-`"none"`).
+Codex, close step 4's children first and follow its fresh-context checks.
 
 **Skip when there is nothing to adjudicate.** If the merged finding set
 from steps 6a–6c is empty, skip the challenger dispatch — and only the
@@ -1365,9 +1363,11 @@ The table below lists the **additional** required fields per action:
 
 #### Pipeline mode (`$FULLSEND_OUTPUT_DIR` is set)
 
-Write the result to `$FULLSEND_OUTPUT_DIR/agent-result.json` following
-the output schema in the agent definition (`agents/review.md`). Do NOT
-post the review directly — the post-script handles all forge mutations.
+On Codex, close every completed child, including the final challenger,
+before writing. No child ID may remain open; never close running children.
+
+Write `$FULLSEND_OUTPUT_DIR/agent-result.json` using `agents/review.md`'s
+schema. Only the post-script performs forge mutations.
 
 After writing the file, validate it before exiting:
 
@@ -1375,9 +1375,8 @@ After writing the file, validate it before exiting:
 fullsend-check-output "$FULLSEND_OUTPUT_DIR/agent-result.json"
 ```
 
-If validation fails, read the error output, fix the JSON file, and
-re-run the check. If it still fails after 3 attempts, write the best
-JSON you have and exit.
+Read validation errors, fix the JSON, and retry. After 3 failed attempts,
+write the best JSON and exit.
 
 #### Interactive mode (`$FULLSEND_OUTPUT_DIR` is not set)
 
@@ -1409,7 +1408,7 @@ wins.
   injection defense into sub-agents. These require PR-level context
   that sub-agents do not have.
 - **Schedule every selected task.** Claude Code / pi: one Agent-tool
-  message. Codex: four open children, then close and continue. Do not
+  message. Codex V1: step 4's four-slot wait/collect/close loop. Do not
   drop a selected task to fit a cap, or launch a persona only because
   it is listed.
 - **The orchestrator is the sole producer of `agent-result.json`.** No
