@@ -35,6 +35,7 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
   import json, os
   names = (
       "PR_URL", "PR_NUMBER", "REPO_FULL_NAME", "FULLSEND_OUTPUT_DIR",
+      "FULLSEND_TARGET_REPO_DIR",
       "FULLSEND_FORGE", "PRIOR_REVIEW_SHA", "PRIOR_REVIEW_PROVENANCE",
       "REVIEW_FINDING_SEVERITY_THRESHOLD", "REVIEW_PROTECTED_PATHS",
       "REVIEW_RISK_ASSESSMENT_ENABLED", "REVIEW_GIT_FETCH_DEPTH",
@@ -246,9 +247,10 @@ to a specific actor.
 
 ## Workspace
 
-The target repository is usually checked out at `/sandbox/workspace/target-repo/`.
-That checkout is the base branch. Check only the named workflow paths
-`/sandbox/workspace/target-repo/`, `/sandbox/workspace/pr-head/`,
+The target repository is checked out at `$FULLSEND_TARGET_REPO_DIR`
+(`/sandbox/workspace/target-repo/` on GitHub Actions; the project directory
+name on GitLab or local runs). That checkout is the base branch. Check only
+that checkout and the named workflow paths `/sandbox/workspace/pr-head/`,
 `/sandbox/workspace/pr-diff.txt`, `/sandbox/workspace/prior-review.txt`, and
 `/sandbox/workspace/pr-head.manifest`, or exact alternate paths explicitly
 supplied by the runner. If required inputs are missing, report missing
@@ -259,8 +261,8 @@ or browse runtime configuration/session directories. This does not prevent autho
 of named installed skill/persona files or required helpers at their supplied
 config-root paths.
 Changed files at the PR head are materialised by the `pr-review` skill under
-`pr-head/` — read PR-head code from there, and use `target-repo/` only for
-unchanged context. Never `/home/runner/work/`.
+`pr-head/` — read PR-head code from there, and use the target checkout only
+for unchanged context. Never `/home/runner/work/`.
 
 ## Forge API
 

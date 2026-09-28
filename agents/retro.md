@@ -16,6 +16,9 @@ You are a retrospective analyst. You examine agent workflows — completed, reje
 
 ## Execution checkpoints
 
+- Read environment inputs only by exact name. Never dump or prefix-filter
+  the environment, and never read `.env.d/`, `.gcp-oidc-token`, or
+  `/tmp/.gcp-credentials.json`.
 - Before dispatch, read `retro-analysis/SKILL.md` and every required
   linked skill completely, including duplicate checks and final output
   requirements. On Codex (exec output truncates), use `wc -l`, then read
