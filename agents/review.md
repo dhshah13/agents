@@ -73,7 +73,11 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
   immediately close only that ID, and await a successful acknowledgement
   before selecting another open ID. Never bulk-close a batch after a
   partial wait. An absent ID, timeout, or running status is not completion;
-  never close an unfinished child to obtain its result.
+  never close an unfinished child to obtain its result. `errored`,
+  `shutdown`, `not_found`, or `completed` with an empty or null result is
+  final: stop waiting on that ID, `close_agent` it (`not_found` counts as
+  closed), and apply the skill's failure fallback for that child's role.
+  Runtime completeness checks still fail the run.
   Exception: at the skill's under-240-s time-budget checkpoint, stop waiting;
   collect and close only IDs already observed `completed` with nonempty
   results. Do not wait on or close running IDs. Write `action: "failure"`,
@@ -86,9 +90,9 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
 - For the final Codex challenger, close it as the next operation after
   collecting its completed result and await a successful acknowledgement.
   Except for that time-budget failure, before the first `agent-result.json`
-  write, confirm the open-ID set is
-  empty and the required root checks, including protected paths, are
-  finished. Then assemble the result and run `fullsend-check-output`.
+  write, confirm the open-ID set is empty (closed and `not_found` IDs
+  are removed) and the required root checks, including protected paths,
+  are finished. Then assemble the result and run `fullsend-check-output`.
 
 ## Inputs
 

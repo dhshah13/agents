@@ -110,10 +110,9 @@ Checkpoints:
   a review.
 - **When a sub-agent returns after step 4** under 240 s remaining with
   others outstanding: stop waiting. On Codex, collect and close only IDs
-  already observed `completed` with a nonempty result; never wait on or
-  close running children. Write `failure` with `reason: time-budget` and
-  no `body` (step 7), even with open IDs. Sandbox teardown reaps them.
-  Incomplete children still fail runtime checks.
+  already `completed` with a nonempty result; never wait on or close
+  running children. Write `failure` with `reason: time-budget` and
+  no `body` (step 7), even with open IDs; runtime checks still fail.
 
 ### 1. Identify the PR
 
@@ -464,12 +463,12 @@ incident.
      `security-triage`, no `model`.
    - **pi, persona not listed:** keep `Explore`, omit `model`.
    - **Codex, persona listed:** `spawn_agent`, `agent_type` =
-     `security-triage`, `message` = composed prompt.
+     `security-triage`, `message` = composed prompt, `fork_context: false`.
    - **Codex, persona not listed:** do not spawn; apply the triage-failure
      fallback below (all files security-critical).
 
    If spawned, complete this agent **synchronously** before step 3d; on Codex use
-   step 4's singleton wait/collect/close loop.
+   step 4's wait/close loop.
 
 5. Parse the triage output. The security-triage sub-agent returns a
    JSON object with `security_critical_files` (array of objects with
@@ -832,16 +831,16 @@ Include 3c-2 risk-assessment in the selected set when enabled.
 - **Claude Code / pi:** all selected Agent calls in one message. Leave
   `run_in_background` unset (Time budget notifications; `false`
   blocks). pi queues beyond its cap.
-- **Codex V1:** run at most four open children concurrently.
-  For one ID, call `wait_agent` with `targets: [id]` until
-  `completed` includes a nonempty result. Collect it, then
-  `close_agent` with `target` = that ID and await success before
-  removing the ID, refilling, or selecting another. Unless the Time budget
-  failure checkpoint applies, repeat until queue
-  and open set are empty. Missing IDs, timeouts, or running
-  statuses free no slot; wait again. Never bulk-close after a partial
-  wait or close unfinished children for results. Apply step 6d's
-  challenger skip rule.
+- **Codex V1:** keep at most four children open. Wait on one ID per
+  `wait_agent` call (`targets: [id]`) until `completed` has a nonempty
+  result; collect it, `close_agent` that ID, and await success before
+  refilling or selecting another. `errored`, `shutdown`, `not_found`, or
+  `completed` with an empty or null result is final: stop waiting, close
+  it (`not_found` counts as closed), and apply the role's fallback (3c-1,
+  3c-2, step 5, 6d); runtime checks still fail. On a timeout or
+  `running`, wait again. Except at the Time budget checkpoint, repeat
+  until queue and open set are empty. Never bulk-close after a partial
+  wait or close unfinished children. Apply step 6d's challenger skip rule.
 
 Wait for all selected sub-agents to complete; apply the Time budget
 checkpoint as each returns.
@@ -1364,9 +1363,9 @@ The table below lists the **additional** required fields per action:
 
 #### Pipeline mode (`$FULLSEND_OUTPUT_DIR` is set)
 
-On Codex, close every completed child, including the challenger, before writing;
-never close running children. Only the Time budget `failure` path above permits
-open IDs at write time. Every other result requires an empty open-ID set.
+On Codex, close every finished child, including the challenger, before writing
+(`not_found` counts as closed). Only the Time budget `failure` path may leave
+IDs open.
 
 Write `$FULLSEND_OUTPUT_DIR/agent-result.json` using `agents/review.md`'s
 schema. Only the post-script performs forge mutations.

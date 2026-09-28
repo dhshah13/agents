@@ -190,7 +190,7 @@ nothing:
   `completed` with nonempty results. It does not wait on or close running
   children. This failure-only exception allows open IDs at the write;
   sandbox teardown reaps them. Every other result still requires all
-  children to be completed and closed.
+  children to be finished and closed.
 
   The failure artifact does not make an incomplete Codex run successful:
   Fullsend still fails its child-evidence checks and skips the post-script.

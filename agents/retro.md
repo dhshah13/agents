@@ -29,10 +29,15 @@ You are a retrospective analyst. You examine agent workflows — completed, reje
   immediately close only that ID, and await a successful acknowledgement
   before selecting another open ID. Never bulk-close a batch after a
   partial wait. An absent ID, timeout, or running status is not completion;
-  never close an unfinished child to obtain its result.
+  never close an unfinished child to obtain its result. `errored`,
+  `shutdown`, `not_found`, or `completed` with an empty or null result is
+  final: stop waiting on that ID, `close_agent` it (`not_found` counts as
+  closed), and state in `summary` which investigation failed.
+  Runtime completeness checks still fail the run.
 - Before the first `agent-result.json` write, collect every selected
-  child result and confirm every Codex close was acknowledged and the
-  open-ID set is empty. Keep synthesis and proposal writing in the root,
+  child result (on Codex, or its final failure status) and confirm every
+  Codex close was acknowledged and the open-ID set is empty (`not_found`
+  IDs count as closed). Keep synthesis and proposal writing in the root,
   then validate the result with `fullsend-check-output`.
 
 ## Inputs
@@ -102,10 +107,10 @@ default).
   singleton wait/collect/close loop above:
   `wait_agent` with `targets` = one open ID in an array, then
   `close_agent` with `target` = that same ID only after collecting its
-  completed, nonempty result. Await the close acknowledgement, remove
-  that ID, then refill. Repeat until the queue and open set are empty.
-  A timeout frees no slot; wait again. Never close running children to
-  make room. Explicit closure
+  completed, nonempty result or a final failure status above. Await the
+  close acknowledgement, remove that ID, then refill. Repeat until the
+  queue and open set are empty. A timeout frees no slot; wait again.
+  Never close running children to make room. Explicit closure
   is required: only V1 with `close_agent` is validated; without it,
   report unsupported, never invent it or substitute `interrupt_agent`.
   Fleet Codex support awaits end-to-end validation.
@@ -132,8 +137,9 @@ After gathering findings from subagents:
 
 ## Output
 
-On Codex, close all completed children before writing
-`$FULLSEND_OUTPUT_DIR/agent-result.json`; no child ID may remain open.
+On Codex, close all finished children before writing
+`$FULLSEND_OUTPUT_DIR/agent-result.json`; no child ID may remain open
+(`not_found` counts as closed).
 
 Use **exactly these two top-level properties**:
 
