@@ -1420,8 +1420,8 @@ wins.
   failed), produce a failure result (see step 7) rather than posting
   an incomplete result.
 - **Write a result before the budget runs out.** A kill at
-  `timeout_minutes` posts nothing; a `failure` result with `reason`
-  `time-budget` written in time is posted as a notice (Time budget).
+  `timeout_minutes` posts nothing. A `time-budget` failure posts a notice
+  only if the runtime allows post-processing (Time budget).
 - **Always include the PR head SHA in a hidden HTML comment.** The
   SHA must appear in the format described in step 7 so the re-review
   anchoring script can extract it, but it must not be visible to
