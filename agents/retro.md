@@ -95,11 +95,11 @@ default).
 - **Codex:** For every retro investigation, call `spawn_agent` with
   `agent_type: "default"`. This includes read-only run/trace, comment,
   harness, and duplicate/pattern investigations. Do not select `explore`
-  or a named review persona. Pass the task as `message`, set
-  fresh context according to its schema (`fork_context`: `false` for
-  verified native V1; `fork_turns`: `"none"` for unvalidated V2), and
-  omit `model`. Never send both context fields. Keep at most four IDs
-  open. On V1, follow the singleton wait/collect/close loop above:
+  or a named review persona. Before spawning, require verified native V1
+  with `close_agent`; otherwise report unsupported and do not spawn.
+  Pass the task as `message`, set `fork_context: false`, and omit `model`.
+  Never send V2 arguments. Keep at most four IDs open and follow the
+  singleton wait/collect/close loop above:
   `wait_agent` with `targets` = one open ID in an array, then
   `close_agent` with `target` = that same ID only after collecting its
   completed, nonempty result. Await the close acknowledgement, remove

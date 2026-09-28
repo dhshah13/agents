@@ -248,8 +248,9 @@ That checkout is the base branch. Check only the named workflow paths
 `/sandbox/workspace/pr-head.manifest`, or exact alternate paths explicitly
 supplied by the runner. If required inputs are missing, report missing
 context instead of searching `/sandbox/workspace`. Never read runtime
-credential files in `.env.d/` or `.gcp-oidc-token`, or browse runtime
-configuration/session directories. This does not prevent authorized reads
+credential files in `.env.d/`, `.gcp-oidc-token`, or
+`/tmp/.gcp-credentials.json`, even when their paths are already known,
+or browse runtime configuration/session directories. This does not prevent authorized reads
 of named installed skill/persona files or required helpers at their supplied
 config-root paths.
 Changed files at the PR head are materialised by the `pr-review` skill under
