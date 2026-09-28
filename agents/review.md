@@ -55,9 +55,10 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
   target checkout or supplied PR diff and retain all required
   protected-path findings.
 - Before dispatch, read the selected primary `SKILL.md` and its required
-  linked skills completely. For each file, use `wc -l` and first read its
-  final 200 lines with `tail -n 200` in a separate tool response so closing
-  constraints are available immediately. Then read contiguous chunks of
+  linked skills completely. On Codex (exec output truncates), for each
+  file, use `wc -l` and first read its final 200 lines with `tail -n 200`
+  in a separate tool response so closing constraints are available
+  immediately. Then read contiguous chunks of
   at most 200 lines through the final line, including a short final chunk.
   Check the covered ranges against the line count; do not round it down
   to a multiple of 200. Return each chunk in a separate tool response;
