@@ -186,7 +186,15 @@ nothing:
   remaining`). The review is still posted.
 - With under 240 s left while dimension sub-agents are still running,
   the orchestrator writes a `failure` result with `reason: time-budget`.
-  The post-script posts that as the review notice:
+  On Codex, it first collects and closes only children already observed
+  `completed` with nonempty results. It does not wait on or close running
+  children. This failure-only exception allows open IDs at the write;
+  sandbox teardown reaps them. Every other result still requires all
+  children to be completed and closed.
+
+  The failure artifact does not make an incomplete Codex run successful:
+  Fullsend still fails its child-evidence checks and skips the post-script.
+  When the runtime permits the post-script to run, it posts this notice:
 
   ```
   ## Review

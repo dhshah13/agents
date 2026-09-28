@@ -87,14 +87,12 @@ Follow these steps in order. Do not skip steps.
 
 ### Time budget
 
-The runner kills the sandbox at the harness `timeout_minutes` with no
-wrap-up: a review that has not written `agent-result.json` by then
-posts nothing. The harness mirrors that value into `TIMEOUT_SECONDS`;
-skip every time check when it is unset.
+The runner kills the sandbox at `timeout_minutes`; without `agent-result.json`,
+nothing is posted. The harness mirrors this into `TIMEOUT_SECONDS`;
+skip time checks when unset.
 
-Before anything else in step 1: `date +%s > /sandbox/workspace/agent-start`
-(a file: shell variables do not survive between Bash calls). The
-runner's clock starts 1–2 minutes before yours, so:
+Start step 1 with `date +%s > /sandbox/workspace/agent-start`;
+shell variables do not survive Bash calls. The runner starts 1–2 minutes earlier:
 
 ```bash
 if test -n "${TIMEOUT_SECONDS:-}" && test -s /sandbox/workspace/agent-start; then
@@ -111,9 +109,11 @@ Checkpoints:
   minutes on any PR) as described there; a review without it is still
   a review.
 - **When a sub-agent returns after step 4** under 240 s remaining with
-  others still outstanding: stop waiting; write a `failure` result
-  (step 7) with `reason` `time-budget` and no `body` (the post-script's
-  own notice says the PR was not reviewed). A kill posts nothing.
+  others outstanding: stop waiting. On Codex, collect and close only IDs
+  already observed `completed` with a nonempty result; never wait on or
+  close running children. Write `failure` with `reason: time-budget` and
+  no `body` (step 7), even with open IDs. Sandbox teardown reaps them.
+  Incomplete children still fail runtime checks.
 
 ### 1. Identify the PR
 
@@ -456,20 +456,20 @@ incident.
    ```
 
 4. Spawn with the composed prompt from parts 1–3 (persona
-   `security-triage`), following the runtime note when present.
+   `security-triage`), following step 4's runtime checks.
 
-   - **Claude Code:** Agent tool, `model`: `haiku`, `subagent_type`:
-     `Explore` (read-only).
+   - **Claude Code, no runtime note:** Agent tool, `model`: `haiku`,
+     `subagent_type`: `Explore` (read-only).
    - **pi, persona listed:** Agent tool, `subagent_type` =
      `security-triage`, no `model`.
    - **pi, persona not listed:** keep `Explore`, omit `model`.
-   - **Codex:** apply step 4's checks with `agent_type` =
-     `security-triage` if listed, otherwise the runtime-provided generic
-     child. Use `message` = composed prompt and step 4's singleton
-     wait/collect/close loop before step 3d. Explore is instruction-only.
+   - **Codex, persona listed:** `spawn_agent`, `agent_type` =
+     `security-triage`, `message` = composed prompt.
+   - **Codex, persona not listed:** do not spawn; apply the triage-failure
+     fallback below (all files security-critical).
 
-   This agent runs **synchronously** because its output feeds into
-   step 3d. Classification does not require deep reasoning.
+   If spawned, complete this agent **synchronously** before step 3d; on Codex use
+   step 4's singleton wait/collect/close loop.
 
 5. Parse the triage output. The security-triage sub-agent returns a
    JSON object with `security_critical_files` (array of objects with
@@ -820,13 +820,11 @@ here):
    - **pi, persona not listed:** omit `subagent_type` and `model`;
      child uses this run's servable default.
    - **Codex, persona listed:** `spawn_agent`: `agent_type` = name,
-     `message` = prompt. Fresh context: V1 `fork_context`:
-     `false` (verified); V2 `fork_turns`: `"none"` (unvalidated). Never
-     send both. Explicit closure requires V1 `close_agent`. If absent,
-     report unsupported; never invent it or substitute `interrupt_agent`.
-     Fleet support awaits end-to-end validation.
-   - **Codex, persona not listed:** same checks for the runtime-provided
-     generic child. Explore is instruction-only.
+     `message` = prompt, `fork_context: false`. V1 with `close_agent`
+     is required; otherwise report unsupported. Never substitute
+     `interrupt_agent` or send V2 arguments.
+   - **Codex, persona not listed:** same checks with `agent_type: "default"`,
+     except security-triage (3c-1 forbids that fallback).
 
 **Schedule every selected task; bound open children by runtime.**
 Include 3c-2 risk-assessment in the selected set when enabled.
@@ -838,7 +836,8 @@ Include 3c-2 risk-assessment in the selected set when enabled.
   For one ID, call `wait_agent` with `targets: [id]` until
   `completed` includes a nonempty result. Collect it, then
   `close_agent` with `target` = that ID and await success before
-  removing the ID, refilling, or selecting another. Repeat until queue
+  removing the ID, refilling, or selecting another. Unless the Time budget
+  failure checkpoint applies, repeat until queue
   and open set are empty. Missing IDs, timeouts, or running
   statuses free no slot; wait again. Never bulk-close after a partial
   wait or close unfinished children for results. Apply step 6d's
@@ -1365,8 +1364,9 @@ The table below lists the **additional** required fields per action:
 
 #### Pipeline mode (`$FULLSEND_OUTPUT_DIR` is set)
 
-On Codex, close every completed child, including the final challenger,
-before writing. No child ID may remain open; never close running children.
+On Codex, close every completed child, including the challenger, before writing;
+never close running children. Only the Time budget `failure` path above permits
+open IDs at write time. Every other result requires an empty open-ID set.
 
 Write `$FULLSEND_OUTPUT_DIR/agent-result.json` using `agents/review.md`'s
 schema. Only the post-script performs forge mutations.

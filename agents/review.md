@@ -74,13 +74,19 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
   before selecting another open ID. Never bulk-close a batch after a
   partial wait. An absent ID, timeout, or running status is not completion;
   never close an unfinished child to obtain its result.
+  Exception: at the skill's under-240-s time-budget checkpoint, stop waiting;
+  collect and close only IDs already observed `completed` with nonempty
+  results. Do not wait on or close running IDs. Write `action: "failure"`,
+  `reason: "time-budget"`, without `body`, even if IDs remain open; sandbox
+  teardown reaps them. This does not satisfy runtime completeness checks.
 - Retain completed child results by role. When risk assessment is enabled
   and its child succeeds, include its returned object as `risk_assessment`
   in the final JSON. Use the skill's risk-failure fallback only when that
   child actually fails; do not discard its result while merging findings.
 - For the final Codex challenger, close it as the next operation after
   collecting its completed result and await a successful acknowledgement.
-  Before the first `agent-result.json` write, confirm the open-ID set is
+  Except for that time-budget failure, before the first `agent-result.json`
+  write, confirm the open-ID set is
   empty and the required root checks, including protected paths, are
   finished. Then assemble the result and run `fullsend-check-output`.
 
