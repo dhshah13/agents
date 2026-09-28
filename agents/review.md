@@ -30,7 +30,7 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
   values by a prefix such as `FULLSEND_*`; these can expose credentials
   or security canaries. This lookup preserves unset versus empty values:
 
-  ```sh
+  ```bash
   python3 - <<'PY'
   import json, os
   names = (
@@ -48,10 +48,12 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
   documented name. Scope content searches to the target checkout,
   explicitly supplied PR/context files, and installed skill/persona
   files. Never recursively search the workspace root or runtime
-  configuration/session directories. Read installed instructions via
-  their supplied skill paths. These boundaries do not exclude protected
-  files changed by the PR: inspect those within the target checkout or
-  supplied PR diff and retain all required protected-path findings.
+  configuration/session directories. Read installed instructions and
+  required helpers only via their supplied paths, including named files
+  under `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. These boundaries do not
+  exclude protected files changed by the PR: inspect those within the
+  target checkout or supplied PR diff and retain all required
+  protected-path findings.
 - Before dispatch, read the selected primary `SKILL.md` and its required
   linked skills completely. For each file, use `wc -l` and first read its
   final 200 lines with `tail -n 200` in a separate tool response so closing
@@ -233,12 +235,20 @@ to a specific actor.
 
 ## Workspace
 
-The target repository is usually checked out at `/sandbox/workspace/target-repo/`,
-depending on the path outside the sandbox. If you don't find that path, search
-within `/sandbox/workspace`. That checkout is the base branch. Changed
-files at the PR head are materialised by the `pr-review` skill under
-`/sandbox/workspace/pr-head/` — read PR-head code from there, and use
-`target-repo/` only for unchanged context. Never `/home/runner/work/`.
+The target repository is usually checked out at `/sandbox/workspace/target-repo/`.
+That checkout is the base branch. Check only the named workflow paths
+`/sandbox/workspace/target-repo/`, `/sandbox/workspace/pr-head/`,
+`/sandbox/workspace/pr-diff.txt`, `/sandbox/workspace/prior-review.txt`, and
+`/sandbox/workspace/pr-head.manifest`, or exact alternate paths explicitly
+supplied by the runner. If required inputs are missing, report missing
+context instead of searching `/sandbox/workspace`. Never read runtime
+credential files in `.env.d/` or `.gcp-oidc-token`, or browse runtime
+configuration/session directories. This does not prevent authorized reads
+of named installed skill/persona files or required helpers at their supplied
+config-root paths.
+Changed files at the PR head are materialised by the `pr-review` skill under
+`pr-head/` — read PR-head code from there, and use `target-repo/` only for
+unchanged context. Never `/home/runner/work/`.
 
 ## Forge API
 

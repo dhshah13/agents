@@ -24,7 +24,7 @@ review verdicts.
 
 1. Run the Tier 1 metadata script:
    ```bash
-   bash "${CLAUDE_CONFIG_DIR}/skills/pr-risk-assessment/scripts/risk-tier1.sh"
+   bash "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:?Set CLAUDE_CONFIG_DIR or CODEX_HOME}}/skills/pr-risk-assessment/scripts/risk-tier1.sh"
    ```
    Capture the KEY=VALUE output. Each line is one signal.
 

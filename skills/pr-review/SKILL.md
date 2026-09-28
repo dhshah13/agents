@@ -460,13 +460,13 @@ incident.
 
    - **Claude Code:** Agent tool, `model`: `haiku`, `subagent_type`:
      `Explore` (read-only).
-   - **Pi, persona listed:** Agent tool, `subagent_type` =
+   - **pi, persona listed:** Agent tool, `subagent_type` =
      `security-triage`, no `model`.
-   - **Pi, persona not listed:** keep `Explore`, omit `model`.
-   - **Codex:** follow step 4's schema/support checks. Use `agent_type`:
-     `security-triage` when listed, otherwise the note's generic child;
-     `message` = composed prompt. Wait until terminal, collect, then
-     close before step 3d. Explore is instruction-only.
+   - **pi, persona not listed:** keep `Explore`, omit `model`.
+   - **Codex:** apply step 4's checks with `agent_type` =
+     `security-triage` if listed, otherwise the runtime-provided generic
+     child. Use `message` = composed prompt and step 4's singleton
+     wait/collect/close loop before step 3d. Explore is instruction-only.
 
    This agent runs **synchronously** because its output feeds into
    step 3d. Classification does not require deep reasoning.
@@ -808,39 +808,41 @@ here):
    REVIEW_SUB_AGENT_TRUE
    ```
 
-2. Spawn each selected sub-agent with the composed prompt from parts
-   1–5. Follow the runtime note. On Codex, omit `model`; the runtime selects.
+2. Spawn each selected sub-agent with the prompt from parts
+   1–5. Follow the runtime note; omit `model` on Codex.
 
-   - **Persona listed (pi):** Agent tool, `subagent_type` = persona
-     `name:`, no `model`. Runner resolves from `agents[].subagents` and
-     frontmatter; extra `model` is ignored; unlisted type is rejected.
-   - **Persona listed (codex):** `spawn_agent` `agent_type` = that name,
-     `message` = composed prompt. Fresh-context fields depend on the
-     schema: V1 `fork_context`: `false` (verified), V2 `fork_turns`:
-     `"none"` (unvalidated). Never send both. Explicit closure is
-     required: only V1 with `close_agent` is validated. Without it,
+   - **Claude Code, no runtime note:** Agent tool, frontmatter `model`
+     (`opus` for `correctness`, `security`, `challenger`;
+     `sonnet` otherwise), no `subagent_type`.
+   - **pi, persona listed:** Agent tool, `subagent_type` = persona
+     `name:`, omit `model`. Runner resolves `agents[].subagents` and
+     frontmatter; ignores extra `model`; rejects unlisted types.
+   - **pi, persona not listed:** omit `subagent_type` and `model`;
+     child uses this run's servable default.
+   - **Codex, persona listed:** `spawn_agent`: `agent_type` = name,
+     `message` = prompt. Fresh context: V1 `fork_context`:
+     `false` (verified); V2 `fork_turns`: `"none"` (unvalidated). Never
+     send both. Explicit closure requires V1 `close_agent`. If absent,
      report unsupported; never invent it or substitute `interrupt_agent`.
      Fleet support awaits end-to-end validation.
-   - **No runtime note (Claude Code):** Agent tool, `model` from
-     frontmatter (`opus` for `correctness`, `security`, `challenger`;
-     `sonnet` otherwise), no `subagent_type`.
-   - **Persona not listed (pi):** omit `subagent_type` and `model`;
-     child uses this run's servable default.
-   - **Persona not listed (codex):** apply these checks to the note's generic child.
-     Explore is instruction-only.
+   - **Codex, persona not listed:** same checks for the runtime-provided
+     generic child. Explore is instruction-only.
 
 **Schedule every selected task; bound open children by runtime.**
 Include 3c-2 risk-assessment in the selected set when enabled.
 
 - **Claude Code / pi:** all selected Agent calls in one message. Leave
   `run_in_background` unset (Time budget notifications; `false`
-  blocks). Pi queues beyond its cap.
-- **Codex V1:** keep at most four IDs open. `wait_agent` with `targets`
-  = open IDs returns on any completion or timeout. Collect and
-  `close_agent` with `target` = ID only for terminal children; remove
-  closed IDs and refill. Repeat until queue/open set are empty. A
-  timeout frees no slot; wait again. Never close running children to
-  make room. Then apply step 6d's challenger skip rule.
+  blocks). pi queues beyond its cap.
+- **Codex V1:** run at most four open children concurrently.
+  For one ID, call `wait_agent` with `targets: [id]` until
+  `completed` includes a nonempty result. Collect it, then
+  `close_agent` with `target` = that ID and await success before
+  removing the ID, refilling, or selecting another. Repeat until queue
+  and open set are empty. Missing IDs, timeouts, or running
+  statuses free no slot; wait again. Never bulk-close after a partial
+  wait or close unfinished children for results. Apply step 6d's
+  challenger skip rule.
 
 Wait for all selected sub-agents to complete; apply the Time budget
 checkpoint as each returns.
