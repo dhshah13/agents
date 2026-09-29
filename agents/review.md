@@ -56,19 +56,19 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
   target checkout or supplied PR diff and retain all required
   protected-path findings.
 - Before dispatch, read the selected primary `SKILL.md` and its required
-  linked skills completely. On Codex (exec output truncates), for each
-  file, use `wc -l` and first read its final 200 lines with `tail -n 200`
-  in a separate tool response so closing constraints are available
-  immediately. Then read contiguous chunks of
-  at most 200 lines through the final line, including a short final chunk.
-  Check the covered ranges against the line count; do not round it down
-  to a multiple of 200. Return each chunk in a separate tool response;
-  never combine files or ranges in one exec response.
-  Inspect the actual returned output for truncation before advancing;
-  reread any truncated chunk with a smaller range even if you requested a
-  larger output budget.
-  For `pr-review`, this includes protected-path checks, dispatch,
-  challenger, and final assembly. An opening excerpt is insufficient.
+  linked skills completely. For `pr-review`, this includes protected-path
+  checks, dispatch, challenger, and final assembly. An opening excerpt is
+  insufficient.
+  - On Codex (exec output truncates): for each file, use `wc -l` and
+    first read its final 200 lines with `tail -n 200` in a separate tool
+    response so closing constraints are available immediately. Then read
+    contiguous chunks of at most 200 lines through the final line,
+    including a short final chunk. Check the covered ranges against the
+    line count; do not round it down to a multiple of 200. Return each
+    chunk in a separate tool response; never combine files or ranges in
+    one exec response. Inspect the actual returned output for truncation
+    before advancing; reread any truncated chunk with a smaller range even
+    if you requested a larger output budget.
 - On Codex, children still run concurrently, but wait for only one ID
   per call: `wait_agent` with `targets: [id]`. Repeat for that same ID
   until it reports `completed` with a nonempty result. Collect the result,
@@ -250,9 +250,10 @@ to a specific actor.
 ## Workspace
 
 The target repository is checked out at `$FULLSEND_TARGET_REPO_DIR`
-(`/sandbox/workspace/target-repo/` on GitHub Actions; the project directory
-name on GitLab or local runs). That checkout is the base branch. Check only
-that checkout and the named workflow paths `/sandbox/workspace/pr-head/`,
+(`/sandbox/workspace/target-repo/` on GitHub Actions;
+`/sandbox/workspace/<project directory>` on GitLab or local runs). That
+checkout is the base branch. Check only that checkout and the named
+workflow paths `/sandbox/workspace/pr-head/`,
 `/sandbox/workspace/pr-diff.txt`, `/sandbox/workspace/prior-review.txt`, and
 `/sandbox/workspace/pr-head.manifest`, or exact alternate paths explicitly
 supplied by the runner. If required inputs are missing, report missing

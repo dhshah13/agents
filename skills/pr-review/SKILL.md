@@ -111,8 +111,8 @@ Checkpoints:
 - **When a sub-agent returns after step 4** under 240 s remaining with
   others outstanding: stop waiting. On Codex, collect and close only IDs
   already `completed` with a nonempty result; never wait on or close
-  running children. Write `failure` with `reason: time-budget` and
-  no `body` (step 7), even with open IDs; runtime checks still fail.
+  running children; runtime checks still fail. Write `failure` with
+  `reason: time-budget` and no `body` (step 7), even with open IDs.
 
 ### 1. Identify the PR
 
