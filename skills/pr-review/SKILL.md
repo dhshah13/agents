@@ -834,13 +834,14 @@ Include 3c-2 risk-assessment in the selected set when enabled.
 - **Codex V1:** keep at most four children open. Wait on one ID per
   `wait_agent` call (`targets: [id]`) until `completed` has a nonempty
   result; collect it, `close_agent` that ID, and await success before
-  refilling or selecting another. `errored`, `shutdown`, `not_found`, or
-  `completed` with an empty or null result is final: stop waiting, close
-  it (`not_found` counts as closed), and apply the role's fallback (3c-1,
-  3c-2, step 5, 6d); runtime checks still fail. On a timeout or
-  `running`, wait again. Except at the Time budget checkpoint, repeat
-  until queue and open set are empty. Never bulk-close after a partial
-  wait or close unfinished children. Apply step 6d's challenger skip rule.
+  refilling or selecting another. For an open ID, `errored`, `shutdown`,
+  `not_found`, or `completed` with an empty or null result is final: stop
+  waiting, close it (`not_found` counts as closed), and apply the role's
+  fallback (3c-1, 3c-2, step 5, 6d); runtime checks still fail. Ignore
+  `not_found` on closed IDs. On timeout or `running`, wait again. Except
+  at the Time budget checkpoint, repeat until queue and open set are
+  empty. Never bulk-close after a partial wait or close unfinished
+  children. Apply step 6d's challenger skip rule.
 
 Wait for all selected sub-agents to complete; apply the Time budget
 checkpoint as each returns.
@@ -1363,9 +1364,8 @@ The table below lists the **additional** required fields per action:
 
 #### Pipeline mode (`$FULLSEND_OUTPUT_DIR` is set)
 
-On Codex, close every finished child, including the challenger, before writing
-(`not_found` counts as closed). Only the Time budget `failure` path may leave
-IDs open.
+On Codex, close every finished child, including the challenger, before writing.
+Only the Time budget `failure` path may leave IDs open.
 
 Write `$FULLSEND_OUTPUT_DIR/agent-result.json` using `agents/review.md`'s
 schema. Only the post-script performs forge mutations.
@@ -1409,9 +1409,8 @@ wins.
   injection defense into sub-agents. These require PR-level context
   that sub-agents do not have.
 - **Schedule every selected task.** Claude Code / pi: one Agent-tool
-  message. Codex V1: step 4's four-slot wait/collect/close loop. Do not
-  drop a selected task to fit a cap, or launch a persona only because
-  it is listed.
+  message. Codex V1: step 4's four-slot loop. Do not drop a selected
+  task to fit a cap, or launch a persona only because it is listed.
 - **The orchestrator is the sole producer of `agent-result.json`.** No
   sub-agent writes this file.
 - **Report failure rather than posting a partial review.** If you cannot

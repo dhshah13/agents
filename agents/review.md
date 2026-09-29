@@ -75,11 +75,13 @@ NOTE: sub-agent dispatch MUST ONLY use prompts read from
   immediately close only that ID, and await a successful acknowledgement
   before selecting another open ID. Never bulk-close a batch after a
   partial wait. An absent ID, timeout, or running status is not completion;
-  never close an unfinished child to obtain its result. `errored`,
-  `shutdown`, `not_found`, or `completed` with an empty or null result is
-  final: stop waiting on that ID, `close_agent` it (`not_found` counts as
-  closed), and apply the skill's failure fallback for that child's role.
-  Runtime completeness checks still fail the run.
+  never close an unfinished child to obtain its result. For an open ID
+  whose result you have not collected, `errored`, `shutdown`, `not_found`,
+  or `completed` with an empty or null result is final: stop waiting on
+  that ID, `close_agent` it (`not_found` counts as closed), and apply the
+  skill's failure fallback for that child's role. Runtime completeness
+  checks still fail the run. `not_found` for an ID you already closed is
+  expected; ignore it.
   Exception: at the skill's under-240-s time-budget checkpoint, stop waiting;
   collect and close only IDs already observed `completed` with nonempty
   results. Do not wait on or close running IDs. Write `action: "failure"`,
