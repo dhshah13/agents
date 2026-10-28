@@ -494,6 +494,22 @@ if jq -e '.findings' "${RESULT_FILE}" >/dev/null 2>&1; then
       fi
       RESULT_FILE="${DOWNGRADE_RESULT}"
     fi
+
+    # Disclose the omission so a filtered result does not read as a clean
+    # pass (#1800). Both counts come from the filter above, so the stated
+    # number can never disagree with what was actually posted.
+    hidden_count=$(( original_count - filtered_count ))
+    if [ "${filtered_count}" -eq 0 ]; then
+      THRESHOLD_NOTICE=$'\n\n---\n'"No findings at or above \`${EFFECTIVE_FINDING_SEVERITY_THRESHOLD}\` severity; ${hidden_count} lower-severity finding(s) were not posted."
+    else
+      THRESHOLD_NOTICE=$'\n\n---\n'"${hidden_count} finding(s) below the \`${EFFECTIVE_FINDING_SEVERITY_THRESHOLD}\` severity threshold were not posted."
+    fi
+    THRESHOLD_NOTICE_RESULT=$(mktemp)
+    CLEANUP_FILES+=("${THRESHOLD_NOTICE_RESULT}")
+    jq --arg notice "${THRESHOLD_NOTICE}" \
+      '.body = ((.body // "") + $notice)' \
+      "${RESULT_FILE}" > "${THRESHOLD_NOTICE_RESULT}"
+    RESULT_FILE="${THRESHOLD_NOTICE_RESULT}"
   else
     rm -f "${FILTERED_RESULT}"
   fi

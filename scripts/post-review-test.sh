@@ -1611,6 +1611,7 @@ run_body_count_test() {
   local json_content="$2"
   local pattern="$3"
   local expected_count="$4"
+  local threshold="${5:-low}"
 
   local run_dir="${TMPDIR}/run-${test_name}"
   mkdir -p "${run_dir}/iteration-1/output"
@@ -1628,7 +1629,7 @@ run_body_count_test() {
     export REPO_FULL_NAME="test-org/test-repo"
     export PR_URL="https://github.com/test-org/test-repo/pull/99"
     export FULLSEND_FORGE="github"
-    export REVIEW_FINDING_SEVERITY_THRESHOLD="low"
+    export REVIEW_FINDING_SEVERITY_THRESHOLD="${threshold}"
     bash "${POST_SCRIPT}"
   ) > "${TMPDIR}/stdout-${test_name}.log" 2>&1 || exit_code=$?
 
@@ -1708,6 +1709,26 @@ for sticky_case in "${STICKY_CASES[@]}"; do
 done
 run_body_count_test "projection-strips-rebuilt-summary-line" \
   "${STICKY_INPUTS[rebuilt-summary]}" '<summary>Previous run</summary>' "0"
+
+# --- Severity-threshold disclosure (#1800) ---
+# A review filtered down to nothing must not read as a clean pass. The
+# disclosed count is derived from the same filter that drops the findings,
+# so it cannot disagree with what was posted.
+THRESHOLD_ALL_HIDDEN='{"action":"request-changes","pr_number":99,"repo":"test-org/test-repo","head_sha":"abcdef0123456789abcdef0123456789abcdef01","body":"Issues found","findings":[{"severity":"low","category":"style","file":"internal/foo.go","line":7,"description":"minor one"},{"severity":"medium","category":"logic-error","file":"internal/bar.go","line":9,"description":"minor two"}]}'
+run_body_count_test "severity-threshold-discloses-fully-filtered" \
+  "${THRESHOLD_ALL_HIDDEN}" \
+  'No findings at or above `high` severity; 2 lower-severity finding(s) were not posted.' "1" "high"
+
+THRESHOLD_PARTLY_HIDDEN='{"action":"request-changes","pr_number":99,"repo":"test-org/test-repo","head_sha":"abcdef0123456789abcdef0123456789abcdef01","body":"Issues found","findings":[{"severity":"high","category":"auth-bypass","file":"internal/foo.go","line":7,"description":"real problem"},{"severity":"low","category":"style","file":"internal/bar.go","line":9,"description":"minor one"},{"severity":"medium","category":"logic-error","file":"internal/baz.go","line":11,"description":"minor two"}]}'
+run_body_count_test "severity-threshold-discloses-partially-filtered" \
+  "${THRESHOLD_PARTLY_HIDDEN}" \
+  '2 finding(s) below the `high` severity threshold were not posted.' "1" "high"
+
+# A genuinely clean review stays clean: nothing was filtered, so nothing is
+# disclosed.
+THRESHOLD_NO_FINDINGS='{"action":"approve","pr_number":99,"repo":"test-org/test-repo","head_sha":"abcdef0123456789abcdef0123456789abcdef01","body":"Looks good to me"}'
+run_body_count_test "severity-threshold-silent-when-nothing-filtered" \
+  "${THRESHOLD_NO_FINDINGS}" 'were not posted' "0" "high"
 
 # Round trip: post the body, wrap it in a sticky history block that holds an
 # older marker, and check pre-review recovers only this run's projection.
