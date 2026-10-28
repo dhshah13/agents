@@ -136,6 +136,12 @@ verdict is downgraded to a comment (applying the `requires-manual-review` label)
 The severity threshold is absolute — it applies to all findings regardless of
 the `actionable` flag, respecting the user's configured threshold throughout.
 
+Whenever severity filtering drops findings, post-review appends a notice to the
+review body naming the configured threshold and the number of findings that were
+not posted, so a filtered review is not mistaken for a clean pass. The count
+comes from the same filter that drops the findings, so it always matches what
+was posted. A review with nothing filtered is left unchanged.
+
 On a verified re-review with a prior findings ledger, newly reported
 `info`/`low` findings do not block the review or start a fix run. They may
 remain visible in the posted review. Prior high/critical findings always
