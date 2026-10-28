@@ -2094,6 +2094,23 @@ run_rereview_gate_case "rereview-prior-medium-still-blocks" \
   "request-changes" \
   "prior medium-or-higher findings remain open"
 
+# A prior blocking finding the threshold dropped is restored by the gate and
+# posted, so the #1800 disclosure must not report it as withheld.
+run_rereview_gate_case "rereview-restored-finding-not-reported-as-hidden" \
+  "$(jq -c '.findings=[{severity:"high",category:"auth-bypass",file:"old.go",line:1,description:"still broken",id:"f_open1"}]' <<< "${BASE_REVIEW}")" \
+  '{"version":2,"action":"request-changes","findings":[{"severity":"high","category":"auth-bypass","file":"old.go","line":1,"id":"f_open1"}]}' \
+  "request-changes" \
+  "Blocking prior findings:" \
+  "were not posted" \
+  "critical" \
+  "__inherit__" \
+  "src/main.go" \
+  "false" \
+  "4" \
+  "0" \
+  "" \
+  '[.findings[]? | select(.id == "f_open1")] | length == 1'
+
 run_rereview_gate_case "rereview-prior-advisory-medium-does-not-block" \
   "$(jq -c '.findings=[{severity:"low",category:"style",file:"new.go",line:1,description:"minor"}]' <<< "${BASE_REVIEW}")" \
   '{"version":2,"action":"comment","findings":[{"severity":"medium","category":"doc-style","file":"old.md","line":1,"id":"f_advisory1","actionable":false}]}' \
