@@ -1116,7 +1116,7 @@ done
 # GitLab uses the authenticated review-token identity as its trusted bot
 # provider and the normalized resolver role from fullsend#7907.
 GITLAB_HUMAN_PRIOR='{"version":2,"findings":[{"severity":"low","category":"logic-error","file":"src/foo.go","line":4,"id":"f_gitlab1"}],"dispositions":[{"id":"f_gitlab1","status":"open"}]}'
-GITLAB_HUMAN_THREADS='{"threads":[{"is_resolved":true,"path":"src/foo.go","line":4,"original_line":3,"resolved_by":"alice","resolved_by_type":"User","resolved_by_role":"maintain","resolved_by_role_verified":true,"comments_truncated":false,"comments":[{"author":"review-bot","author_type":"Bot","author_role":"none","author_role_verified":false,"body":"<!-- finding:f_gitlab1 --> Logic issue.","created_at":"2026-10-08T10:00:00Z"}]}],"truncated":false}'
+GITLAB_HUMAN_THREADS='{"threads":[{"is_resolved":true,"path":"src/foo.go","side":"right","line":4,"start_side":null,"start_line":null,"original_line":null,"original_start_line":null,"old_line":3,"new_line":4,"is_outdated":null,"resolved_by":"alice","resolved_by_type":"User","resolved_by_role":"maintain","resolved_by_role_verified":true,"comments_truncated":false,"comments":[{"author":"review-bot","author_type":"Bot","author_role":"none","author_role_verified":false,"body":"<!-- finding:f_gitlab1 --> Logic issue.","created_at":"2026-10-08T10:00:00Z"}]}],"truncated":false}'
 gitlab_prior_file="${TMPDIR}/gitlab-human-prior.txt"
 printf '%s\n' "$(projection_marker "${GITLAB_HUMAN_PRIOR}")" > "${gitlab_prior_file}"
 gitlab_mock_bin="$(build_gitlab_mock "opened" "prauthor")"
@@ -1141,8 +1141,8 @@ else
 fi
 
 # GitLab PATs may belong to a normal User account. The authenticated /user
-# identity is trusted on GitLab even when the discussion author type is User.
-GITLAB_HUMAN_USER_THREADS="$(jq -c '.threads[0].comments[0].author_type = "User"' <<< "${GITLAB_HUMAN_THREADS}")"
+# identity is trusted even for a removed-line discussion authored by a User.
+GITLAB_HUMAN_USER_THREADS="$(jq -c '.threads[0] |= (.side = "left" | .old_line = 4 | .new_line = null | .comments[0].author_type = "User")' <<< "${GITLAB_HUMAN_THREADS}")"
 gitlab_user_prior_file="${TMPDIR}/gitlab-human-user-prior.txt"
 printf '%s\n' "$(projection_marker "${GITLAB_HUMAN_PRIOR}")" > "${gitlab_user_prior_file}"
 if ! env \
