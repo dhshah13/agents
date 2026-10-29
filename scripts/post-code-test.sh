@@ -1334,72 +1334,6 @@ run_stale_branch_test "branch-with-open-pr" \
   "abc123 refs/heads/agent/42-fix-widget" "99" "keep:open-pr"
 
 # ---------------------------------------------------------------------------
-# Test helper — reimplements the push retry logic from post-code.sh
-# section 7b. Given a push exit code and output, returns the action.
-# ---------------------------------------------------------------------------
-decide_push_retry() {
-  local push_rc="$1"
-  local push_output="$2"
-
-  if [ "${push_rc}" -eq 0 ]; then
-    echo "success"
-    return 0
-  fi
-
-  if echo "${push_output}" | grep -qi "non-fast-forward\|rejected\|fetch first\|not a fast forward"; then
-    echo "retry:force-with-lease"
-    return 0
-  fi
-
-  echo "fail:unexpected-error"
-  return 0
-}
-
-run_push_retry_test() {
-  local test_name="$1"
-  local push_rc="$2"
-  local push_output="$3"
-  local expected_prefix="$4"
-
-  local actual
-  actual="$(decide_push_retry "${push_rc}" "${push_output}")"
-
-  if [[ "${actual}" != ${expected_prefix}* ]]; then
-    echo "FAIL: ${test_name}"
-    echo "  push_rc:         '${push_rc}'"
-    echo "  push_output:     '${push_output}'"
-    echo "  expected prefix: '${expected_prefix}'"
-    echo "  actual:          '${actual}'"
-    FAILURES=$((FAILURES + 1))
-    return
-  fi
-
-  echo "PASS: ${test_name}"
-}
-
-# --- Push retry test cases ---
-
-# Successful push → no retry needed
-run_push_retry_test "push-success" \
-  "0" "Everything up-to-date" "success"
-
-# Non-fast-forward error → retry with --force-with-lease
-run_push_retry_test "push-non-fast-forward" \
-  "1" "error: failed to push some refs: non-fast-forward" "retry:force-with-lease"
-
-# Rejected error → retry with --force-with-lease
-run_push_retry_test "push-rejected" \
-  "1" "! [rejected] agent/42 -> agent/42 (fetch first)" "retry:force-with-lease"
-
-# GitHub's wording when the API ref update loses a race → retry with --force-with-lease
-run_push_retry_test "push-api-not-a-fast-forward" \
-  "1" "gh: Update is not a fast forward (HTTP 422)" "retry:force-with-lease"
-
-# Unknown error → fail
-run_push_retry_test "push-unexpected-error" \
-  "1" "fatal: repository not found" "fail:unexpected-error"
-
-# ---------------------------------------------------------------------------
 # Test helper — reimplements the agent artifact stripping logic from
 # post-code.sh section 2b. Given a list of changed files, returns which
 # files would be stripped as agent artifacts.
@@ -2505,6 +2439,176 @@ elif ! grep -qi "git status failed" "${_sec_gitstatus_log}"; then
 else
   echo "PASS: git-status-failure-exits-nonzero (exit ${_sec_gitstatus_rc})"
 fi
+
+# ---------------------------------------------------------------------------
+# Push retry (post-code.sh §7b) against the real script.
+#
+# GITHUB_SIGNED_COMMITS=false so forge_push_branch is git push. A git
+# wrapper supplies the first-push failure text so each wording of the
+# production grep is hit; the retry is the real `git push --force-with-lease`.
+# ---------------------------------------------------------------------------
+run_code_push_retry_test() {
+  local test_name="$1"
+  local first_push_fail="${2:-}"
+  local expect_retry="$3"
+  local expect_exit="$4"
+
+  local run_dir="${SEC_CODE_TMPDIR}/run-${test_name}"
+  setup_sec_code_repo "${run_dir}" "agent/99-push-retry"
+  local mock_bin="${run_dir}/mock-bin"
+  local push_log="${run_dir}/push-calls.log"
+  mkdir -p "${mock_bin}"
+  : > "${push_log}"
+  # gitleaks-install prepends the directory it found gitleaks in to PATH.
+  # Keep gitleaks in this same mock-bin as the git wrapper so that prepend
+  # cannot resurrect SEC_CODE_MOCK_BIN/git (which execs the real git).
+  cp "${SEC_CODE_MOCK_BIN}/gitleaks" "${SEC_CODE_MOCK_BIN}/sleep" "${mock_bin}/"
+
+  cat > "${mock_bin}/gh" <<'MOCKEOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "api -X")      echo "unexpected Git Data API call on the plain-push path: $*" >&2; exit 99 ;;
+  "api repos/"*) echo "main"; exit 0 ;;
+  "pr list")     echo ""; exit 0 ;;
+  "pr create")   echo "https://github.com/test-org/test-repo/pull/1"; exit 0 ;;
+  "pr view")     echo "https://github.com/test-org/test-repo/pull/1"; exit 0 ;;
+  "issue comment"|"pr comment")
+    printf '%s\n' "$@"
+    cat 2>/dev/null || true
+    exit 0 ;;
+  *)             exit 0 ;;
+esac
+MOCKEOF
+  chmod +x "${mock_bin}/gh"
+
+  cat > "${mock_bin}/git" <<MOCKEOF
+#!/usr/bin/env bash
+if [[ "\$1" == "remote" && "\$2" == "set-url" ]]; then
+  exit 0
+fi
+if [[ "\$1" == "push" ]]; then
+  printf 'git %s\n' "\$*" >> "${push_log}"
+  _force=false
+  for _a in "\$@"; do
+    if [[ "\$_a" == "--force-with-lease" ]]; then
+      _force=true
+    fi
+  done
+  if [[ "\${_force}" == true ]]; then
+    exec ${REAL_GIT} "\$@"
+  fi
+  if [[ -n "\${MOCK_PUSH_FAIL:-}" ]]; then
+    echo "\${MOCK_PUSH_FAIL}" >&2
+    exit 1
+  fi
+  exec ${REAL_GIT} "\$@"
+fi
+exec ${REAL_GIT} "\$@"
+MOCKEOF
+  chmod +x "${mock_bin}/git"
+
+  local exit_code=0
+  # shellcheck disable=SC2030,SC2031
+  (
+    cd "${run_dir}"
+    export HOME="${SEC_CODE_TMPDIR}"
+    export PATH="${mock_bin}:${PATH}"
+    export PUSH_TOKEN="fake-token"
+    export REPO_FULL_NAME="test-org/test-repo"
+    export ISSUE_NUMBER="99"
+    export REPO_DIR="repo"
+    export FULLSEND_FORGE="github"
+    export GITHUB_SIGNED_COMMITS="false"
+    if [[ -n "${first_push_fail}" ]]; then
+      export MOCK_PUSH_FAIL="${first_push_fail}"
+    else
+      unset MOCK_PUSH_FAIL
+    fi
+    bash "${POST_SCRIPT}"
+  ) > "${SEC_CODE_TMPDIR}/stdout-${test_name}.log" 2>&1 || exit_code=$?
+
+  local log="${SEC_CODE_TMPDIR}/stdout-${test_name}.log"
+  local retried=false
+  if [[ -s "${push_log}" ]] && grep -q -- '--force-with-lease' "${push_log}"; then
+    retried=true
+  fi
+
+  if [[ "${exit_code}" -ne "${expect_exit}" ]]; then
+    echo "FAIL: ${test_name} — exit ${exit_code}, want ${expect_exit}"
+    cat "${log}"
+    echo "push calls:"; cat "${push_log}" 2>/dev/null || true
+    FAILURES=$((FAILURES + 1))
+    return
+  fi
+
+  # The script must have attempted a plain push first (a line without
+  # --force-with-lease); otherwise these tests could pass without any push.
+  local plain_push_line force_push_line
+  plain_push_line="$(grep -n -- '^git push' "${push_log}" \
+    | grep -v -e '--force-with-lease' -e '--delete' \
+    | head -n1 | cut -d: -f1 || true)"
+  force_push_line="$(grep -n -- '--force-with-lease' "${push_log}" \
+    | head -n1 | cut -d: -f1 || true)"
+  if [[ -z "${plain_push_line}" ]]; then
+    echo "FAIL: ${test_name} — expected a plain git push in the push log"
+    cat "${log}"
+    echo "push calls:"; cat "${push_log}" 2>/dev/null || true
+    FAILURES=$((FAILURES + 1))
+    return
+  fi
+  if [[ "${expect_retry}" == "true" ]] \
+    && [[ -n "${force_push_line}" ]] \
+    && (( plain_push_line >= force_push_line )); then
+    echo "FAIL: ${test_name} — plain git push must precede --force-with-lease retry"
+    cat "${log}"
+    echo "push calls:"; cat "${push_log}" 2>/dev/null || true
+    FAILURES=$((FAILURES + 1))
+    return
+  fi
+
+  if [[ "${expect_retry}" == "true" ]]; then
+    if [[ "${retried}" != true ]]; then
+      echo "FAIL: ${test_name} — expected --force-with-lease retry"
+      cat "${log}"
+      echo "push calls:"; cat "${push_log}" 2>/dev/null || true
+      FAILURES=$((FAILURES + 1))
+      return
+    fi
+    if ! grep -qF "retrying with --force-with-lease" "${log}"; then
+      echo "FAIL: ${test_name} — missing retry warning"
+      cat "${log}"
+      FAILURES=$((FAILURES + 1))
+      return
+    fi
+  else
+    if [[ "${retried}" == true ]]; then
+      echo "FAIL: ${test_name} — unexpected --force-with-lease"
+      cat "${log}"
+      echo "push calls:"; cat "${push_log}"
+      FAILURES=$((FAILURES + 1))
+      return
+    fi
+    if grep -qF "retrying with --force-with-lease" "${log}"; then
+      echo "FAIL: ${test_name} — unexpected retry warning"
+      cat "${log}"
+      FAILURES=$((FAILURES + 1))
+      return
+    fi
+  fi
+
+  echo "PASS: ${test_name}"
+}
+
+run_code_push_retry_test "push-success" \
+  "" "false" 0
+run_code_push_retry_test "push-non-fast-forward" \
+  "error: failed to push some refs: non-fast-forward" "true" 0
+run_code_push_retry_test "push-rejected" \
+  "! [rejected] agent/42 -> agent/42 (fetch first)" "true" 0
+run_code_push_retry_test "push-api-not-a-fast-forward" \
+  "gh: Update is not a fast forward (HTTP 422)" "true" 0
+run_code_push_retry_test "push-unexpected-error" \
+  "fatal: repository not found" "false" 1
 
 rm -rf "${SEC_CODE_TMPDIR}"
 
