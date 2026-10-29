@@ -1334,72 +1334,6 @@ run_stale_branch_test "branch-with-open-pr" \
   "abc123 refs/heads/agent/42-fix-widget" "99" "keep:open-pr"
 
 # ---------------------------------------------------------------------------
-# Test helper — reimplements the push retry logic from post-code.sh
-# section 7b. Given a push exit code and output, returns the action.
-# ---------------------------------------------------------------------------
-decide_push_retry() {
-  local push_rc="$1"
-  local push_output="$2"
-
-  if [ "${push_rc}" -eq 0 ]; then
-    echo "success"
-    return 0
-  fi
-
-  if echo "${push_output}" | grep -qi "non-fast-forward\|rejected\|fetch first\|not a fast forward"; then
-    echo "retry:force-with-lease"
-    return 0
-  fi
-
-  echo "fail:unexpected-error"
-  return 0
-}
-
-run_push_retry_test() {
-  local test_name="$1"
-  local push_rc="$2"
-  local push_output="$3"
-  local expected_prefix="$4"
-
-  local actual
-  actual="$(decide_push_retry "${push_rc}" "${push_output}")"
-
-  if [[ "${actual}" != ${expected_prefix}* ]]; then
-    echo "FAIL: ${test_name}"
-    echo "  push_rc:         '${push_rc}'"
-    echo "  push_output:     '${push_output}'"
-    echo "  expected prefix: '${expected_prefix}'"
-    echo "  actual:          '${actual}'"
-    FAILURES=$((FAILURES + 1))
-    return
-  fi
-
-  echo "PASS: ${test_name}"
-}
-
-# --- Push retry test cases ---
-
-# Successful push → no retry needed
-run_push_retry_test "push-success" \
-  "0" "Everything up-to-date" "success"
-
-# Non-fast-forward error → retry with --force-with-lease
-run_push_retry_test "push-non-fast-forward" \
-  "1" "error: failed to push some refs: non-fast-forward" "retry:force-with-lease"
-
-# Rejected error → retry with --force-with-lease
-run_push_retry_test "push-rejected" \
-  "1" "! [rejected] agent/42 -> agent/42 (fetch first)" "retry:force-with-lease"
-
-# GitHub's wording when the API ref update loses a race → retry with --force-with-lease
-run_push_retry_test "push-api-not-a-fast-forward" \
-  "1" "gh: Update is not a fast forward (HTTP 422)" "retry:force-with-lease"
-
-# Unknown error → fail
-run_push_retry_test "push-unexpected-error" \
-  "1" "fatal: repository not found" "fail:unexpected-error"
-
-# ---------------------------------------------------------------------------
 # Test helper — reimplements the agent artifact stripping logic from
 # post-code.sh section 2b. Given a list of changed files, returns which
 # files would be stripped as agent artifacts.
@@ -2506,6 +2440,176 @@ else
   echo "PASS: git-status-failure-exits-nonzero (exit ${_sec_gitstatus_rc})"
 fi
 
+# ---------------------------------------------------------------------------
+# Push retry (post-code.sh §7b) against the real script.
+#
+# GITHUB_SIGNED_COMMITS=false so forge_push_branch is git push. A git
+# wrapper supplies the first-push failure text so each wording of the
+# production grep is hit; the retry is the real `git push --force-with-lease`.
+# ---------------------------------------------------------------------------
+run_code_push_retry_test() {
+  local test_name="$1"
+  local first_push_fail="${2:-}"
+  local expect_retry="$3"
+  local expect_exit="$4"
+
+  local run_dir="${SEC_CODE_TMPDIR}/run-${test_name}"
+  setup_sec_code_repo "${run_dir}" "agent/99-push-retry"
+  local mock_bin="${run_dir}/mock-bin"
+  local push_log="${run_dir}/push-calls.log"
+  mkdir -p "${mock_bin}"
+  : > "${push_log}"
+  # gitleaks-install prepends the directory it found gitleaks in to PATH.
+  # Keep gitleaks in this same mock-bin as the git wrapper so that prepend
+  # cannot resurrect SEC_CODE_MOCK_BIN/git (which execs the real git).
+  cp "${SEC_CODE_MOCK_BIN}/gitleaks" "${SEC_CODE_MOCK_BIN}/sleep" "${mock_bin}/"
+
+  cat > "${mock_bin}/gh" <<'MOCKEOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "api -X")      echo "unexpected Git Data API call on the plain-push path: $*" >&2; exit 99 ;;
+  "api repos/"*) echo "main"; exit 0 ;;
+  "pr list")     echo ""; exit 0 ;;
+  "pr create")   echo "https://github.com/test-org/test-repo/pull/1"; exit 0 ;;
+  "pr view")     echo "https://github.com/test-org/test-repo/pull/1"; exit 0 ;;
+  "issue comment"|"pr comment")
+    printf '%s\n' "$@"
+    cat 2>/dev/null || true
+    exit 0 ;;
+  *)             exit 0 ;;
+esac
+MOCKEOF
+  chmod +x "${mock_bin}/gh"
+
+  cat > "${mock_bin}/git" <<MOCKEOF
+#!/usr/bin/env bash
+if [[ "\$1" == "remote" && "\$2" == "set-url" ]]; then
+  exit 0
+fi
+if [[ "\$1" == "push" ]]; then
+  printf 'git %s\n' "\$*" >> "${push_log}"
+  _force=false
+  for _a in "\$@"; do
+    if [[ "\$_a" == "--force-with-lease" ]]; then
+      _force=true
+    fi
+  done
+  if [[ "\${_force}" == true ]]; then
+    exec ${REAL_GIT} "\$@"
+  fi
+  if [[ -n "\${MOCK_PUSH_FAIL:-}" ]]; then
+    echo "\${MOCK_PUSH_FAIL}" >&2
+    exit 1
+  fi
+  exec ${REAL_GIT} "\$@"
+fi
+exec ${REAL_GIT} "\$@"
+MOCKEOF
+  chmod +x "${mock_bin}/git"
+
+  local exit_code=0
+  # shellcheck disable=SC2030,SC2031
+  (
+    cd "${run_dir}"
+    export HOME="${SEC_CODE_TMPDIR}"
+    export PATH="${mock_bin}:${PATH}"
+    export PUSH_TOKEN="fake-token"
+    export REPO_FULL_NAME="test-org/test-repo"
+    export ISSUE_NUMBER="99"
+    export REPO_DIR="repo"
+    export FULLSEND_FORGE="github"
+    export GITHUB_SIGNED_COMMITS="false"
+    if [[ -n "${first_push_fail}" ]]; then
+      export MOCK_PUSH_FAIL="${first_push_fail}"
+    else
+      unset MOCK_PUSH_FAIL
+    fi
+    bash "${POST_SCRIPT}"
+  ) > "${SEC_CODE_TMPDIR}/stdout-${test_name}.log" 2>&1 || exit_code=$?
+
+  local log="${SEC_CODE_TMPDIR}/stdout-${test_name}.log"
+  local retried=false
+  if [[ -s "${push_log}" ]] && grep -q -- '--force-with-lease' "${push_log}"; then
+    retried=true
+  fi
+
+  if [[ "${exit_code}" -ne "${expect_exit}" ]]; then
+    echo "FAIL: ${test_name} — exit ${exit_code}, want ${expect_exit}"
+    cat "${log}"
+    echo "push calls:"; cat "${push_log}" 2>/dev/null || true
+    FAILURES=$((FAILURES + 1))
+    return
+  fi
+
+  # The script must have attempted a plain push first (a line without
+  # --force-with-lease); otherwise these tests could pass without any push.
+  local plain_push_line force_push_line
+  plain_push_line="$(grep -n -- '^git push' "${push_log}" \
+    | grep -v -e '--force-with-lease' -e '--delete' \
+    | head -n1 | cut -d: -f1 || true)"
+  force_push_line="$(grep -n -- '--force-with-lease' "${push_log}" \
+    | head -n1 | cut -d: -f1 || true)"
+  if [[ -z "${plain_push_line}" ]]; then
+    echo "FAIL: ${test_name} — expected a plain git push in the push log"
+    cat "${log}"
+    echo "push calls:"; cat "${push_log}" 2>/dev/null || true
+    FAILURES=$((FAILURES + 1))
+    return
+  fi
+  if [[ "${expect_retry}" == "true" ]] \
+    && [[ -n "${force_push_line}" ]] \
+    && (( plain_push_line >= force_push_line )); then
+    echo "FAIL: ${test_name} — plain git push must precede --force-with-lease retry"
+    cat "${log}"
+    echo "push calls:"; cat "${push_log}" 2>/dev/null || true
+    FAILURES=$((FAILURES + 1))
+    return
+  fi
+
+  if [[ "${expect_retry}" == "true" ]]; then
+    if [[ "${retried}" != true ]]; then
+      echo "FAIL: ${test_name} — expected --force-with-lease retry"
+      cat "${log}"
+      echo "push calls:"; cat "${push_log}" 2>/dev/null || true
+      FAILURES=$((FAILURES + 1))
+      return
+    fi
+    if ! grep -qF "retrying with --force-with-lease" "${log}"; then
+      echo "FAIL: ${test_name} — missing retry warning"
+      cat "${log}"
+      FAILURES=$((FAILURES + 1))
+      return
+    fi
+  else
+    if [[ "${retried}" == true ]]; then
+      echo "FAIL: ${test_name} — unexpected --force-with-lease"
+      cat "${log}"
+      echo "push calls:"; cat "${push_log}"
+      FAILURES=$((FAILURES + 1))
+      return
+    fi
+    if grep -qF "retrying with --force-with-lease" "${log}"; then
+      echo "FAIL: ${test_name} — unexpected retry warning"
+      cat "${log}"
+      FAILURES=$((FAILURES + 1))
+      return
+    fi
+  fi
+
+  echo "PASS: ${test_name}"
+}
+
+run_code_push_retry_test "push-success" \
+  "" "false" 0
+run_code_push_retry_test "push-non-fast-forward" \
+  "error: failed to push some refs: non-fast-forward" "true" 0
+run_code_push_retry_test "push-rejected" \
+  "! [rejected] agent/42 -> agent/42 (fetch first)" "true" 0
+run_code_push_retry_test "push-api-not-a-fast-forward" \
+  "gh: Update is not a fast forward (HTTP 422)" "true" 0
+run_code_push_retry_test "push-unexpected-error" \
+  "fatal: repository not found" "false" 1
+
 rm -rf "${SEC_CODE_TMPDIR}"
 
 # ---------------------------------------------------------------------------
@@ -3556,6 +3660,329 @@ run_gl_create_pr_retry_test "gitlab-create-pr-gives-up-after-3" \
   99 "GitLab API error (HTTP 503): no available server" 3 1
 run_gl_create_pr_retry_test "gitlab-create-pr-no-retry-on-400" \
   99 "GitLab API error (HTTP 400): invalid source branch" 1 1
+
+# =============================================================================
+# forge_create_pr already-exists recovery
+# =============================================================================
+
+run_already_exists_matcher_test() {
+  local test_name="$1"
+  local text="$2"
+  local expect_rc="$3"
+  local rc=0
+  (
+    unset FORGE_TRANSIENT_RETRY_SH_LOADED
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/lib/forge-transient-retry.lib.sh"
+    forge_is_already_exists_error "${text}"
+  ) || rc=$?
+  if [ "${rc}" -ne "${expect_rc}" ]; then
+    echo "FAIL: ${test_name}"
+    echo "  expected rc ${expect_rc}, got ${rc}"
+    FAILURES=$((FAILURES + 1))
+    return
+  fi
+  echo "PASS: ${test_name}"
+}
+
+run_already_exists_matcher_test "already-exists-matches-gh-cli" \
+  'a pull request for branch "agent/1-x" into branch "main" already exists:
+https://github.com/org/repo/pull/99' 0
+run_already_exists_matcher_test "already-exists-matches-graphql" \
+  "GraphQL: A pull request already exists for org:agent/1-x. (createPullRequest)" 0
+run_already_exists_matcher_test "already-exists-matches-gitlab-409" \
+  'GitLab API error (HTTP 409): Another open merge request already exists for this source branch: !1' 0
+run_already_exists_matcher_test "already-exists-rejects-plain-422" \
+  "HTTP 422: Validation Failed" 1
+run_already_exists_matcher_test "already-exists-rejects-400" \
+  "GitLab API error (HTTP 400): invalid source branch" 1
+
+run_gh_create_pr_recover_test() {
+  # shellcheck disable=SC2030,SC2031,SC2317
+  local test_name="$1"
+  local expect_rc="$2"
+  local expect_url="$3"
+  local expect_create_attempts="$4"
+  local expect_list_attempts="$5"
+  local list_json="$6"
+  local create_errs="$7"
+
+  local tmp mock_bin call_log rc=0 output create_attempts list_attempts
+  tmp=$(mktemp -d)
+  mock_bin="${tmp}/bin"
+  call_log="${tmp}/calls"
+  mkdir -p "${mock_bin}"
+  : > "${call_log}"
+  printf '%s\n' "${create_errs}" > "${tmp}/create_errs"
+
+  cat > "${mock_bin}/gh" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${CALL_LOG}"
+if printf '%s' " $*" | grep -q ' pr create '; then
+  n=$(grep -c 'pr create' "${CALL_LOG}" 2>/dev/null || true)
+  err=$(sed -n "${n}p" "${CREATE_ERRS_FILE}" 2>/dev/null || true)
+  if [ -n "${err}" ]; then
+    echo "${err}" >&2
+    exit 1
+  fi
+  echo "https://github.com/org/repo/pull/1"
+  exit 0
+fi
+if printf '%s' " $*" | grep -q ' pr list '; then
+  printf '%s\n' "${LIST_JSON}"
+  exit 0
+fi
+exit 0
+MOCK
+  chmod +x "${mock_bin}/gh"
+
+  output=$(
+    # shellcheck disable=SC2030,SC2031,SC2317
+    {
+      unset GITHUB_CODE_OPS_SH_LOADED
+      unset FORGE_TRANSIENT_RETRY_SH_LOADED
+      # shellcheck disable=SC1091
+      source "${SCRIPT_DIR}/lib/github-code-ops.lib.sh"
+      sleep() { :; }
+      export REPO_FULL_NAME="org/repo"
+      export FORGE_TRANSIENT_RETRY_BASE_DELAY=0
+      export CALL_LOG="${call_log}"
+      export CREATE_ERRS_FILE="${tmp}/create_errs"
+      export LIST_JSON="${list_json}"
+      export PATH="${mock_bin}:${PATH}"
+      forge_create_pr "main" "agent/1-x" "title" "body"
+    } 2>&1
+  ) || rc=$?
+
+  create_attempts=$(grep -c 'pr create' "${call_log}" || true)
+  list_attempts=$(grep -c 'pr list' "${call_log}" || true)
+
+  if [ "${rc}" -ne "${expect_rc}" ]; then
+    echo "FAIL: ${test_name}"
+    echo "  expected rc ${expect_rc}, got ${rc}"
+    echo "  output: ${output}"
+    echo "  calls:"
+    cat "${call_log}"
+    FAILURES=$((FAILURES + 1))
+    rm -rf "${tmp}"
+    return
+  fi
+  if [ "${create_attempts}" -ne "${expect_create_attempts}" ]; then
+    echo "FAIL: ${test_name}"
+    echo "  expected ${expect_create_attempts} gh pr create attempts, got ${create_attempts}"
+    echo "  calls:"
+    cat "${call_log}"
+    echo "  output: ${output}"
+    FAILURES=$((FAILURES + 1))
+    rm -rf "${tmp}"
+    return
+  fi
+  if [ "${list_attempts}" -ne "${expect_list_attempts}" ]; then
+    echo "FAIL: ${test_name}"
+    echo "  expected ${expect_list_attempts} gh pr list attempts, got ${list_attempts}"
+    echo "  calls:"
+    cat "${call_log}"
+    echo "  output: ${output}"
+    FAILURES=$((FAILURES + 1))
+    rm -rf "${tmp}"
+    return
+  fi
+  if [ -n "${expect_url}" ]; then
+    if ! echo "${output}" | grep -qF "${expect_url}"; then
+      echo "FAIL: ${test_name}"
+      echo "  expected URL '${expect_url}'"
+      echo "  output: ${output}"
+      FAILURES=$((FAILURES + 1))
+      rm -rf "${tmp}"
+      return
+    fi
+  fi
+  if [ "${expect_list_attempts}" -gt 0 ]; then
+    if ! grep -q -- '--head agent/1-x' "${call_log}" || ! grep -q -- '--base main' "${call_log}"; then
+      echo "FAIL: ${test_name}"
+      echo "  expected gh pr list --head agent/1-x --base main"
+      echo "  calls:"
+      cat "${call_log}"
+      FAILURES=$((FAILURES + 1))
+      rm -rf "${tmp}"
+      return
+    fi
+  fi
+
+  echo "PASS: ${test_name}"
+  rm -rf "${tmp}"
+}
+
+GH_MATCHING_PR='[{"number":99,"url":"https://github.com/org/repo/pull/99","headRepositoryOwner":{"login":"org"},"headRefName":"agent/1-x","baseRefName":"main"}]'
+GH_WRONG_HEAD='[{"number":99,"url":"https://github.com/org/repo/pull/99","headRepositoryOwner":{"login":"org"},"headRefName":"agent/other","baseRefName":"main"}]'
+GH_WRONG_BASE='[{"number":99,"url":"https://github.com/org/repo/pull/99","headRepositoryOwner":{"login":"org"},"headRefName":"agent/1-x","baseRefName":"develop"}]'
+GH_FORK_PR='[{"number":99,"url":"https://github.com/org/repo/pull/99","headRepositoryOwner":{"login":"forker"},"headRefName":"agent/1-x","baseRefName":"main"}]'
+GH_TWO_PRS='[{"number":98,"url":"https://github.com/org/repo/pull/98","headRepositoryOwner":{"login":"org"},"headRefName":"agent/1-x","baseRefName":"main"},{"number":99,"url":"https://github.com/org/repo/pull/99","headRepositoryOwner":{"login":"org"},"headRefName":"agent/1-x","baseRefName":"main"}]'
+
+run_gh_create_pr_recover_test "create-pr-timeout-then-already-exists-recovers" \
+  0 "https://github.com/org/repo/pull/99" 2 1 \
+  "${GH_MATCHING_PR}" \
+  $'operation timed out\na pull request already exists for org:agent/1-x'
+
+run_gh_create_pr_recover_test "create-pr-already-exists-no-match-fails" \
+  1 "could not be resolved" 1 1 \
+  "[]" \
+  'a pull request already exists for org:agent/1-x'
+
+run_gh_create_pr_recover_test "create-pr-already-exists-wrong-head-not-adopted" \
+  1 "could not be resolved" 1 1 \
+  "${GH_WRONG_HEAD}" \
+  'a pull request already exists for org:agent/1-x'
+
+run_gh_create_pr_recover_test "create-pr-already-exists-wrong-base-not-adopted" \
+  1 "could not be resolved" 1 1 \
+  "${GH_WRONG_BASE}" \
+  'a pull request already exists for org:agent/1-x'
+
+run_gh_create_pr_recover_test "create-pr-already-exists-fork-not-adopted" \
+  1 "could not be resolved" 1 1 \
+  "${GH_FORK_PR}" \
+  'a pull request already exists for org:agent/1-x'
+
+run_gh_create_pr_recover_test "create-pr-already-exists-multiple-fails" \
+  1 "could not be resolved" 1 1 \
+  "${GH_TWO_PRS}" \
+  'a pull request already exists for org:agent/1-x'
+
+run_gh_create_pr_recover_test "create-pr-plain-422-does-not-list" \
+  1 "" 1 0 \
+  "${GH_MATCHING_PR}" \
+  "HTTP 422: Validation Failed"
+
+run_gl_create_pr_recover_test() {
+  # shellcheck disable=SC2030,SC2031,SC2317
+  local test_name="$1"
+  local expect_rc="$2"
+  local expect_url="$3"
+  local expect_post_attempts="$4"
+  local expect_get_attempts="$5"
+  local list_json="$6"
+  local error_msg="$7"
+
+  local tmp call_log rc=0 output post_attempts get_attempts
+  tmp=$(mktemp -d)
+  call_log="${tmp}/calls"
+  : > "${call_log}"
+
+  output=$(
+    # shellcheck disable=SC2030,SC2031,SC2317
+    {
+      unset GITLAB_CODE_OPS_SH_LOADED
+      unset GITLAB_HOST_VALIDATION_SH_LOADED
+      unset FORGE_TRANSIENT_RETRY_SH_LOADED
+      # shellcheck disable=SC1091
+      source "${SCRIPT_DIR}/lib/gitlab-code-ops.lib.sh"
+      sleep() { :; }
+      export CALL_LOG="${call_log}"
+      export ERROR_MSG="${error_msg}"
+      export LIST_JSON="${list_json}"
+      export FORGE_TRANSIENT_RETRY_BASE_DELAY=0
+      export REPO_ENCODED="group%2Fproject"
+      _gitlab_code_api_with_status() {
+        local method="$1"
+        local endpoint="$2"
+        printf '%s %s\n' "${method}" "${endpoint}" >> "${CALL_LOG}"
+        if [ "${method}" = "POST" ]; then
+          echo "${ERROR_MSG}" >&2
+          return 1
+        fi
+        if [[ "${endpoint}" == *"/merge_requests?"* ]]; then
+          printf '%s\n' "${LIST_JSON}"
+          return 0
+        fi
+        if [ "${endpoint}" = "/projects/${REPO_ENCODED}" ]; then
+          echo '{"id":42}'
+          return 0
+        fi
+        echo "unexpected GitLab endpoint ${endpoint}" >&2
+        return 1
+      }
+      forge_create_pr "main" "agent/1-x" "title" "body"
+    } 2>&1
+  ) || rc=$?
+
+  post_attempts=$(grep -c '^POST ' "${call_log}" || true)
+  get_attempts=$(grep -c '^GET ' "${call_log}" || true)
+
+  if [ "${rc}" -ne "${expect_rc}" ]; then
+    echo "FAIL: ${test_name}"
+    echo "  expected rc ${expect_rc}, got ${rc}"
+    echo "  output: ${output}"
+    echo "  calls:"
+    cat "${call_log}"
+    FAILURES=$((FAILURES + 1))
+    rm -rf "${tmp}"
+    return
+  fi
+  if [ "${post_attempts}" -ne "${expect_post_attempts}" ]; then
+    echo "FAIL: ${test_name}"
+    echo "  expected ${expect_post_attempts} GitLab POSTs, got ${post_attempts}"
+    echo "  calls:"
+    cat "${call_log}"
+    echo "  output: ${output}"
+    FAILURES=$((FAILURES + 1))
+    rm -rf "${tmp}"
+    return
+  fi
+  if [ "${get_attempts}" -ne "${expect_get_attempts}" ]; then
+    echo "FAIL: ${test_name}"
+    echo "  expected ${expect_get_attempts} GitLab GETs, got ${get_attempts}"
+    echo "  calls:"
+    cat "${call_log}"
+    echo "  output: ${output}"
+    FAILURES=$((FAILURES + 1))
+    rm -rf "${tmp}"
+    return
+  fi
+  if [ -n "${expect_url}" ]; then
+    if ! echo "${output}" | grep -qF "${expect_url}"; then
+      echo "FAIL: ${test_name}"
+      echo "  expected '${expect_url}'"
+      echo "  output: ${output}"
+      FAILURES=$((FAILURES + 1))
+      rm -rf "${tmp}"
+      return
+    fi
+  fi
+
+  echo "PASS: ${test_name}"
+  rm -rf "${tmp}"
+}
+
+GL_MATCHING_MR='[{"iid":1,"web_url":"https://gitlab.com/group/project/-/merge_requests/1","source_project_id":42,"source_branch":"agent/1-x","target_branch":"main"}]'
+GL_WRONG_TARGET='[{"iid":1,"web_url":"https://gitlab.com/group/project/-/merge_requests/1","source_project_id":42,"source_branch":"agent/1-x","target_branch":"develop"}]'
+GL_FORK_MR='[{"iid":1,"web_url":"https://gitlab.com/group/project/-/merge_requests/1","source_project_id":99,"source_branch":"agent/1-x","target_branch":"main"}]'
+GL_409='GitLab API error (HTTP 409): Another open merge request already exists for this source branch: !1'
+
+run_gl_create_pr_recover_test "gitlab-create-pr-409-recovers" \
+  0 "https://gitlab.com/group/project/-/merge_requests/1" 1 2 \
+  "${GL_MATCHING_MR}" \
+  "${GL_409}"
+
+run_gl_create_pr_recover_test "gitlab-create-pr-409-no-match-fails" \
+  1 "could not be resolved" 1 2 \
+  "[]" \
+  "${GL_409}"
+
+run_gl_create_pr_recover_test "gitlab-create-pr-409-wrong-target-not-adopted" \
+  1 "could not be resolved" 1 2 \
+  "${GL_WRONG_TARGET}" \
+  "${GL_409}"
+
+run_gl_create_pr_recover_test "gitlab-create-pr-409-fork-not-adopted" \
+  1 "could not be resolved" 1 2 \
+  "${GL_FORK_MR}" \
+  "${GL_409}"
+
+run_gl_create_pr_recover_test "gitlab-create-pr-400-does-not-list" \
+  1 "" 1 0 \
+  "${GL_MATCHING_MR}" \
+  "GitLab API error (HTTP 400): invalid source branch"
 
 # --- Summary ---
 
