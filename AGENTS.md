@@ -71,7 +71,8 @@ workflow after GoReleaser succeeds.
   dispatch. Do not modify without coordinating with the fullsend repo.
 - `release.yml` — repo-specific release automation. Triggered by
   semver tag pushes from fullsend's release workflow. Creates a GitHub
-  Release and moves the `v0` floating tag.
+  Release whose notes link the fullsend release and list the PRs merged
+  since the previous final release, and moves the `v0` floating tag.
 - `notify-agent-sync.yml` — fires a `repository_dispatch` event to
   `fullsend-ai/.fullsend` on every push to `main`, triggering
   cross-repo agent digest sync. Requires `SYNC_CLIENT_ID` variable,

@@ -2852,8 +2852,8 @@ run_disposition_case "projection-dismissal-unverified-thread-mints" \
 unset MOCK_REVIEW_THREADS_JSON MOCK_PR_AUTHOR
 
 # GitLab dismissals use the authenticated review-token identity. A normal
-# User author type is valid for PAT-backed review comments.
-GITLAB_HUMAN_DISMISSAL_RESPONSE='{"threads":[{"is_resolved":true,"path":"src/foo.go","line":4,"original_line":3,"resolved_by":"alice","resolved_by_type":"User","resolved_by_role":"maintain","resolved_by_role_verified":true,"comments_truncated":false,"comments":[{"author":"review-bot","author_type":"User","body":"<!-- finding:f_human1 --> Logic issue."}]}],"truncated":false}'
+# User author type is valid for PAT-backed removed-line review comments.
+GITLAB_HUMAN_DISMISSAL_RESPONSE='{"threads":[{"is_resolved":true,"path":"src/foo.go","side":"left","line":4,"start_side":null,"start_line":null,"original_line":null,"original_start_line":null,"old_line":4,"new_line":null,"is_outdated":null,"resolved_by":"alice","resolved_by_type":"User","resolved_by_role":"maintain","resolved_by_role_verified":true,"comments_truncated":false,"comments":[{"author":"review-bot","author_type":"User","body":"<!-- finding:f_human1 --> Logic issue."}]}],"truncated":false}'
 export MOCK_REVIEW_THREADS_RESPONSE="${GITLAB_HUMAN_DISMISSAL_RESPONSE}"
 export MOCK_GITLAB_REVIEW_ACTOR="review-bot"
 run_gitlab_disposition_case() {
@@ -2899,7 +2899,7 @@ run_gitlab_disposition_case "gitlab-dismissed-by-human-closes-by-id" \
 
 # GitLab keeps the line a note was written on, so it cannot show the
 # dismissed line is unchanged: a category rename there still mints.
-MOCK_REVIEW_THREADS_RESPONSE="$(jq -c '.threads[0] |= (.path = "a.go" | .line = 10 | .comments[0].body = "<!-- finding:f_old --> Logic issue.")' <<< "${GITLAB_HUMAN_DISMISSAL_RESPONSE}")"
+MOCK_REVIEW_THREADS_RESPONSE="$(jq -c '.threads[0] |= (.path = "a.go" | .line = 10 | .old_line = 10 | .comments[0].body = "<!-- finding:f_old --> Logic issue.")' <<< "${GITLAB_HUMAN_DISMISSAL_RESPONSE}")"
 export MOCK_REVIEW_THREADS_RESPONSE
 run_gitlab_disposition_case "gitlab-dismissal-category-change-mints" \
   "$(redismiss_review a.go low)" "${REDISMISS_PRIOR}" "$(redismiss_minted a.go)"
