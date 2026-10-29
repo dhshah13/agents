@@ -478,7 +478,11 @@ if jq -e '.findings' "${RESULT_FILE}" >/dev/null 2>&1; then
     # against the findings actually posted (#1800). It cannot be counted here:
     # the re-review gate restores prior open blocking findings regardless of
     # the threshold, so a finding dropped now may still be published.
-    THRESHOLD_HIDDEN_FINDINGS="$(jq -c --argjson rank "$threshold_rank" '
+    #
+    # Ids only: that is all the reconciliation reads, and carrying whole rows
+    # would push descriptions and remediations through a single jq argv slot.
+    # A row with no id keeps a null entry so it still counts as withheld.
+    THRESHOLD_HIDDEN_IDS="$(jq -c --argjson rank "$threshold_rank" '
       [ .findings[] | select(
           (if .severity == "info" then 0
            elif .severity == "low" then 1
@@ -486,7 +490,7 @@ if jq -e '.findings' "${RESULT_FILE}" >/dev/null 2>&1; then
            elif .severity == "high" then 3
            elif .severity == "critical" then 4
            else 1 end) < $rank
-        ) ]
+        ) | .id ]
     ' "${RESULT_FILE}")"
 
     RESULT_FILE="${FILTERED_RESULT}"
@@ -1358,12 +1362,12 @@ fi
 # not mistaken for a clean pass (#1800). Runs after the re-review gate: a
 # dropped finding the gate restored is published, so it is reconciled out of
 # the count rather than reported as withheld.
-if [[ -n "${THRESHOLD_HIDDEN_FINDINGS:-}" ]]; then
-  THRESHOLD_HIDDEN_COUNT="$(jq --argjson hidden "${THRESHOLD_HIDDEN_FINDINGS}" '
+if [[ -n "${THRESHOLD_HIDDEN_IDS:-}" ]]; then
+  THRESHOLD_HIDDEN_COUNT="$(jq --argjson hidden "${THRESHOLD_HIDDEN_IDS}" '
     [ (.findings // [])[].id ] as $posted
     | [ $hidden[]
-        | . as $h
-        | select($h.id == null or ($posted | index($h.id) == null)) ]
+        | . as $id
+        | select($id == null or ($posted | index($id) == null)) ]
     | length
   ' "${RESULT_FILE}")"
   if [[ "${THRESHOLD_HIDDEN_COUNT}" -gt 0 ]]; then
