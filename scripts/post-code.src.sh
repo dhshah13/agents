@@ -28,6 +28,12 @@
 #   FULLSEND_FORGE    — "github" or "gitlab"
 #   REPO_DIR          — path to extracted repo (default: current directory)
 #
+# Jira-sourced runs (FULLSEND_TRACKER or FULLSEND_WORK_ITEM_SOURCE is "jira")
+# also need FULLSEND_WORK_ITEM_URL, JIRA_USER_EMAIL, and JIRA_TOKEN to write
+# the code-stage update and PR/MR URL to the Jira issue. JIRA_BASE_URL is
+# optional and cross-checked against the work-item URL. GitLab targets take
+# the GitLab host from CI_SERVER_HOST.
+#
 # Optional environment variables:
 #   PUSH_TOKEN_SOURCE — "github-app" (for logging; default: unknown)
 #   CODE_ALLOWED_TARGET_BRANCHES
@@ -49,7 +55,9 @@
 # Exit codes:
 #   0  — branch pushed and PR/MR created, OR agent determined nothing to do
 #   1  — validation failure or error (nothing pushed), including a
-#        timeout-killed run that left uncommitted work and no commit
+#        timeout-killed run that left uncommitted work and no commit;
+#        also when a Jira-sourced run cannot write its stage update to Jira
+#        (the PR/MR already exists on the code host)
 set -euo pipefail
 
 SCRIPT_DIR_POST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -200,8 +208,17 @@ ISSUE_NUMBER="${ISSUE_NUMBER:-}"
 WORK_ITEM_URL="${FULLSEND_WORK_ITEM_URL:-${ISSUE_URL:-}}"
 EXTERNAL_WORK_ITEM=false
 
-if [ -n "${FULLSEND_TRACKER:-}" ] \
-   && [ "${FULLSEND_TRACKER}" != "${FULLSEND_FORGE}" ]; then
+# `fullsend run` exports FULLSEND_WORK_ITEM_SOURCE for every run; it names the
+# source tracker when the harness did not set FULLSEND_TRACKER.
+if [ -n "${FULLSEND_TRACKER:-}" ] && [ -n "${FULLSEND_WORK_ITEM_SOURCE:-}" ] \
+   && [ "${FULLSEND_TRACKER}" != "${FULLSEND_WORK_ITEM_SOURCE}" ]; then
+  gha_echo error "FULLSEND_TRACKER and FULLSEND_WORK_ITEM_SOURCE name different trackers"
+  exit 1
+fi
+WORK_ITEM_TRACKER="${FULLSEND_TRACKER:-${FULLSEND_WORK_ITEM_SOURCE:-}}"
+
+if [ -n "${WORK_ITEM_TRACKER}" ] \
+   && [ "${WORK_ITEM_TRACKER}" != "${FULLSEND_FORGE}" ]; then
   EXTERNAL_WORK_ITEM=true
   : "${WORK_ITEM_URL:?FULLSEND_WORK_ITEM_URL is required for external-tracker runs}"
   WORK_ITEM_KEY="${FULLSEND_WORK_ITEM_KEY:-${WORK_ITEM_URL%/}}"
@@ -227,20 +244,30 @@ if [ "${REPO_DIR}" != "." ]; then
 fi
 
 # GitLab needs REPO_ENCODED and GITLAB_HOST for API calls.
-# Always derive GITLAB_HOST from the validated ISSUE_URL. If GITLAB_HOST is
-# pre-set in the environment, verify it matches the URL host to prevent
-# token exfiltration to an unintended host.
+# Always derive GITLAB_HOST from the validated ISSUE_URL (CI_SERVER_HOST for
+# external work items). If GITLAB_HOST is pre-set in the environment, verify
+# it matches that host to prevent token exfiltration to an unintended host.
 if [ "${FULLSEND_FORGE}" = "gitlab" ]; then
-  if ! forge_validate_issue_url "${ISSUE_URL:-}"; then
-    gha_echo error "ISSUE_URL format invalid for GitLab: '${ISSUE_URL:-}'"
-    exit 1
+  if [ "${EXTERNAL_WORK_ITEM}" = "true" ]; then
+    # The source issue lives on another tracker, so ISSUE_URL is not a GitLab
+    # URL. The MR goes to the GitLab instance running this job.
+    if ! _validate_gitlab_host "${CI_SERVER_HOST:-}"; then
+      gha_echo error "Cannot determine the GitLab host for an external work item"
+      exit 1
+    fi
+    _url_host="${CI_SERVER_HOST}"
+  else
+    if ! forge_validate_issue_url "${ISSUE_URL:-}"; then
+      gha_echo error "ISSUE_URL format invalid for GitLab: '${ISSUE_URL:-}'"
+      exit 1
+    fi
+    # Derive GITLAB_HOST from ISSUE_URL first, then compare against any pre-set
+    # value. Using exit 1 (not post_fail_to_issue) avoids sending PRIVATE-TOKEN
+    # to the mismatched host.
+    _url_host="$(echo "${ISSUE_URL}" | sed -E 's|^https://([^/:]+)/.*|\1|')"
   fi
   # shellcheck disable=SC2034
   REPO_ENCODED="$(printf '%s' "${REPO_FULL_NAME}" | jq -sRr @uri)"
-  # Derive GITLAB_HOST from ISSUE_URL first, then compare against any pre-set
-  # value. Using exit 1 (not post_fail_to_issue) avoids sending PRIVATE-TOKEN
-  # to the mismatched host.
-  _url_host="$(echo "${ISSUE_URL}" | sed -E 's|^https://([^/:]+)/.*|\1|')"
   if [[ -n "${GITLAB_HOST:-}" && "${GITLAB_HOST}" != "${_url_host}" ]]; then
     gha_echo error "GITLAB_HOST '${GITLAB_HOST}' does not match issue URL host '${_url_host}'"
     exit 1
@@ -419,6 +446,71 @@ Retry with \`/fs-code\` if appropriate."
   if ! forge_retry_transient forge_post_issue_comment "${body}"; then
     gha_echo warning "Failed to post no-op comment to issue #${safe_issue_number}"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Jira stage update
+#
+# For Jira-sourced runs, writes a concise code-stage update with the PR/MR
+# URL to the originating Jira issue through the runner-side tracker CLI.
+# Branch, PR/MR, review, and merge stay on the code host. The fixed marker
+# makes a retried run edit its earlier comment instead of adding another.
+# Returns non-zero when the write fails so the caller can fail the step.
+#
+# Usage: post_jira_stage_update <verb phrase> <pr_url>
+# ---------------------------------------------------------------------------
+post_jira_stage_update() {
+  local verb="$1"
+  local pr_url="$2"
+
+  if [ "${WORK_ITEM_TRACKER}" != "jira" ]; then
+    return 0
+  fi
+
+  if [ -z "${pr_url}" ]; then
+    gha_echo error "No PR/MR URL to report to the Jira issue"
+    return 1
+  fi
+  if [[ ! "${WORK_ITEM_URL}" =~ ^https://([a-zA-Z0-9.-]+\.atlassian\.net)/browse/([A-Z][A-Z0-9]*)-([0-9]+)$ ]]; then
+    gha_echo error "FULLSEND_WORK_ITEM_URL is not a Jira Cloud issue URL"
+    return 1
+  fi
+  local jira_url="https://${BASH_REMATCH[1]}"
+  local project="${BASH_REMATCH[2]}"
+  local number="${BASH_REMATCH[3]}"
+  if [ "${project}-${number}" != "${WORK_ITEM_KEY}" ]; then
+    gha_echo error "FULLSEND_WORK_ITEM_KEY does not match the Jira issue in FULLSEND_WORK_ITEM_URL"
+    return 1
+  fi
+  local base_url="${JIRA_BASE_URL:-}"
+  while [[ "${base_url}" == */ ]]; do
+    base_url="${base_url%/}"
+  done
+  if [ -n "${base_url}" ] && [ "${base_url}" != "${jira_url}" ]; then
+    gha_echo error "JIRA_BASE_URL does not match the Jira host in FULLSEND_WORK_ITEM_URL"
+    return 1
+  fi
+  if [ -z "${JIRA_USER_EMAIL:-}" ] || [ -z "${JIRA_TOKEN:-}" ]; then
+    gha_echo error "JIRA_USER_EMAIL and JIRA_TOKEN are required to write to Jira"
+    return 1
+  fi
+
+  local noun="pull request"
+  if [ "${FULLSEND_FORGE}" = "gitlab" ]; then
+    noun="merge request"
+  fi
+
+  local body
+  body="**Code stage:** ${verb} ${noun} ${pr_url} for ${WORK_ITEM_KEY}.
+
+Review and merge happen on the ${noun}."
+
+  # The token reaches the CLI through its default JIRA_TOKEN env var rather
+  # than a command-line flag, keeping it out of the process list.
+  printf '%s' "${body}" | JIRA_TOKEN="${JIRA_TOKEN}" fullsend issues post-comment \
+    --tracker jira --project "${project}" --number "${number}" \
+    --jira-url "${jira_url}" --jira-email "${JIRA_USER_EMAIL}" \
+    --marker "<!-- fullsend:code-agent -->" --result -
 }
 
 # ---------------------------------------------------------------------------
@@ -820,6 +912,10 @@ if [ -n "${EXISTING_PR_NUM}" ]; then
   if [ "${EXTERNAL_WORK_ITEM}" != "true" ]; then
     maybe_assign_pr "${EXISTING_PR_NUM}"
   fi
+  if ! post_jira_stage_update "pushed new commits to" "${EXISTING_PR_URL}"; then
+    gha_echo error "Failed to write the code-stage update to Jira issue ${WORK_ITEM_KEY}"
+    exit 1
+  fi
   exit 0
 fi
 
@@ -1049,4 +1145,12 @@ enable_auto_merge "${PR_NUMBER_FROM_URL}" "${REPO_FULL_NAME}"
 
 if [ "${EXTERNAL_WORK_ITEM}" != "true" ]; then
   maybe_assign_pr "${PR_NUMBER_FROM_URL}"
+fi
+
+# ---------------------------------------------------------------------------
+# 10. Jira stage update (Jira-sourced runs only)
+# ---------------------------------------------------------------------------
+if ! post_jira_stage_update "opened" "${PR_URL}"; then
+  gha_echo error "Failed to write the code-stage update to Jira issue ${WORK_ITEM_KEY}"
+  exit 1
 fi
