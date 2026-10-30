@@ -251,7 +251,8 @@ mutations on the runner.
   `not_found`, or `completed` with an empty result is final for that
   sub-agent: do not retry it; the `pr-review` skill's failure fallback
   for that sub-agent applies. A `wait_agent` call that times out is
-  not a final state; a Codex child running past 900 s is.
+  not a final state; a Codex child running past 900 s, pi's limit for a
+  sub-agent, is.
 
 ## Output format
 

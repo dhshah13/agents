@@ -439,7 +439,7 @@ incident.
      no `model`.
    - **Codex roster:** `agent_type`: `security-triage` when listed, else
      `explore` (instruction-only; not an enforced read-only tool set).
-     Close it before step 3d.
+     Wait for it and close it before step 3d.
 
    It runs **synchronously** (its output feeds step 3d).
 
@@ -829,23 +829,22 @@ here):
      roles:`; without it, follow the note): `spawn_agent`, `message` =
      the prompt, `agent_type` = the persona name when listed, else
      omit it, `fork_context: false`, no `model` (bound from
-     `agents[].subagents`); `wait_agent` with `timeout_ms` ≤ 120000; a
-     child running past 900 s has failed.
+     `agents[].subagents`); `wait_agent` with `timeout_ms` ≤ 120000.
      A denied spawn: the note's rule.
 
 **Start every selected sub-agent**; no dispatch limit drops one.
 
 - **Claude Code and pi:** all Agent calls in a single message; leave
-  `run_in_background` unset (`false` blocks until all return). Apply
-  the Time budget checkpoint as each returns.
+  `run_in_background` unset (`false` blocks until all return). Wait
+  for all; apply the Time budget checkpoint as each returns.
 - **Codex roster:** at most four open. Start up to four; `wait_agent`
   on one, collect, `close_agent` it, start the next; repeat until all
   are collected and closed. A timed-out wait is no result: run the
   Time budget checkpoint, wait again. `errored`, `shutdown`,
-  `not_found` and `completed` with an empty result are final: close
-  it and apply the failure fallback (3c-1 item 6, 3c-2, step 5, 6d
-  item 4). Under 240 s, even with one step 4 child running, close
-  all and write the `time-budget` failure.
+  `not_found`, `completed` with an empty result, or running past
+  900 s is final: close it and apply the failure fallback
+  (3c-1 item 6, 3c-2, step 5, 6d item 4). Under 240 s, even with one
+  step 4 child running, close all and write the `time-budget` failure.
 
 ### 5. Collect findings
 

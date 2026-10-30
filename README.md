@@ -16,7 +16,7 @@ First-class agents for the [fullsend](https://github.com/fullsend-ai/fullsend) p
 
 Claude Code (`claude`) is the stable default every repo gets; `pi` is in its enablement (experimental) phase and is selected per repo with `runtime: pi` — see fullsend's [Runtimes](https://github.com/fullsend-ai/fullsend/blob/main/docs/runtimes.md). Every harness sets `effort: high` explicitly.
 
-Review and Retro dispatch native Codex children only when the runtime provides a sub-agent roster ([fullsend #6970](https://github.com/fullsend-ai/fullsend/issues/6970)); the table lists `codex` once a live review and retro run on it is linked from their docs.
+Review and Retro dispatch native Codex children only when the runtime note lists registered sub-agent roles ([fullsend #6970](https://github.com/fullsend-ai/fullsend/issues/6970)); each agent's row lists `codex` once a live run of that agent is linked from its doc.
 
 See [`docs/`](docs/) for detailed documentation on each agent.
 
