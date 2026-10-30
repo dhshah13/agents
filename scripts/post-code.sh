@@ -3636,9 +3636,13 @@ BRANCH="${SAFE_BRANCH}"
 echo "Branch: ${BRANCH}"
 echo "Token source: ${PUSH_TOKEN_SOURCE:-unknown}"
 
-# Withhold the Jira credentials from everything that can run repo-controlled
-# code (commit/push hooks, pre-commit tool installs and hooks). They are
-# restored only inside post_jira_stage_update, for the single Jira write.
+# Stop the Jira credentials from being inherited by child processes that can
+# run repo-controlled code (commit/push hooks, pre-commit tool installs and
+# hooks). This only prevents inheritance; it is not an isolation boundary,
+# because the initial environment of this process and its parent stays
+# readable via /proc/<pid>/environ by anything running as the same user.
+# The credentials are restored only inside post_jira_stage_update, for the
+# single Jira write.
 # Resolve the trusted tracker CLI now, before repo-controlled installs can
 # put a binary of the same name earlier on PATH.
 _jira_token_saved="${JIRA_TOKEN-}"
