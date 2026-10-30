@@ -830,10 +830,9 @@ here):
      the prompt, `agent_type` = the persona name when listed, else
      omit it, `fork_context: false`, no `model`; `wait_agent` with
      `timeout_ms` ≤ 120000. Run `date +%s` after each spawn and at each
-     timed-out wait. A denied spawn: the note's rule (`challenger`:
-     6d item 4).
+     timed-out wait. A denied spawn: the note's rule.
 
-**Start every selected sub-agent.**
+**Start every selected sub-agent**; no dispatch limit drops one.
 
 - **Claude Code and pi:** all Agent calls in a single message; leave
   `run_in_background` unset (`false` blocks until all return). Wait
