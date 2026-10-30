@@ -1311,6 +1311,26 @@ if jq -e '.findings' "${RESULT_FILE}" >/dev/null 2>&1; then
 
   if [ "${filtered_count}" -lt "${original_count}" ]; then
     echo "Severity filter (threshold=${EFFECTIVE_FINDING_SEVERITY_THRESHOLD}): kept ${filtered_count}/${original_count} findings"
+
+    # Record what the filter dropped so the disclosure below can be reconciled
+    # against the findings actually posted (#1800). It cannot be counted here:
+    # the re-review gate restores prior open blocking findings regardless of
+    # the threshold, so a finding dropped now may still be published.
+    #
+    # Ids only: that is all the reconciliation reads, and carrying whole rows
+    # would push descriptions and remediations through a single jq argv slot.
+    # A row with no id keeps a null entry so it still counts as withheld.
+    THRESHOLD_HIDDEN_IDS="$(jq -c --argjson rank "$threshold_rank" '
+      [ .findings[] | select(
+          (if .severity == "info" then 0
+           elif .severity == "low" then 1
+           elif .severity == "medium" then 2
+           elif .severity == "high" then 3
+           elif .severity == "critical" then 4
+           else 1 end) < $rank
+        ) | .id ]
+    ' "${RESULT_FILE}")"
+
     RESULT_FILE="${FILTERED_RESULT}"
 
     # If filtering removed all findings, delete the empty findings array
@@ -1332,6 +1352,7 @@ if jq -e '.findings' "${RESULT_FILE}" >/dev/null 2>&1; then
       fi
       RESULT_FILE="${DOWNGRADE_RESULT}"
     fi
+
   else
     rm -f "${FILTERED_RESULT}"
   fi
@@ -2172,6 +2193,33 @@ if [[ "${HAS_VALID_PRIOR_REVIEW}" = "true" ]]; then
       "${RESULT_FILE}" > "${REREVIEW_RESULT}"
     RESULT_FILE="${REREVIEW_RESULT}"
     ACTION="request-changes"
+  fi
+fi
+
+# Disclose findings the severity threshold withheld, so a filtered review is
+# not mistaken for a clean pass (#1800). Runs after the re-review gate: a
+# dropped finding the gate restored is published, so it is reconciled out of
+# the count rather than reported as withheld.
+if [[ -n "${THRESHOLD_HIDDEN_IDS:-}" ]]; then
+  THRESHOLD_HIDDEN_COUNT="$(jq --argjson hidden "${THRESHOLD_HIDDEN_IDS}" '
+    [ (.findings // [])[].id ] as $posted
+    | [ $hidden[]
+        | . as $id
+        | select($id == null or ($posted | index($id) == null)) ]
+    | length
+  ' "${RESULT_FILE}")"
+  if [[ "${THRESHOLD_HIDDEN_COUNT}" -gt 0 ]]; then
+    if [[ "$(jq '(.findings // []) | length' "${RESULT_FILE}")" -eq 0 ]]; then
+      THRESHOLD_NOTICE=$'\n\n---\n'"No findings at or above \`${EFFECTIVE_FINDING_SEVERITY_THRESHOLD}\` severity; ${THRESHOLD_HIDDEN_COUNT} lower-severity finding(s) were not posted."
+    else
+      THRESHOLD_NOTICE=$'\n\n---\n'"${THRESHOLD_HIDDEN_COUNT} finding(s) below the \`${EFFECTIVE_FINDING_SEVERITY_THRESHOLD}\` severity threshold were not posted."
+    fi
+    THRESHOLD_NOTICE_RESULT=$(mktemp)
+    CLEANUP_FILES+=("${THRESHOLD_NOTICE_RESULT}")
+    jq --arg notice "${THRESHOLD_NOTICE}" \
+      '.body = ((.body // "") + $notice)' \
+      "${RESULT_FILE}" > "${THRESHOLD_NOTICE_RESULT}"
+    RESULT_FILE="${THRESHOLD_NOTICE_RESULT}"
   fi
 fi
 
