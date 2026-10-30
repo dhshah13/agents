@@ -33,13 +33,15 @@ if [[ "${FULLSEND_WORK_ITEM_SOURCE:-}" == "jira" ]]; then
     exit 1
   fi
   FULLSEND_TRACKER="jira"
-  if [[ -n "${FULLSEND_WORK_ITEM_URL:-}" ]]; then
-    if [[ -n "${ISSUE_URL:-}" && "${ISSUE_URL}" != "${FULLSEND_WORK_ITEM_URL}" ]]; then
-      echo "ERROR: ISSUE_URL does not match FULLSEND_WORK_ITEM_URL for a Jira-sourced run" >&2
-      exit 1
-    fi
-    ISSUE_URL="${FULLSEND_WORK_ITEM_URL}"
+  if [[ -z "${FULLSEND_WORK_ITEM_URL:-}" || -z "${FULLSEND_WORK_ITEM_KEY:-}" ]]; then
+    echo "ERROR: FULLSEND_WORK_ITEM_URL and FULLSEND_WORK_ITEM_KEY are required for a Jira-sourced run" >&2
+    exit 1
   fi
+  if [[ -n "${ISSUE_URL:-}" && "${ISSUE_URL}" != "${FULLSEND_WORK_ITEM_URL}" ]]; then
+    echo "ERROR: ISSUE_URL does not match FULLSEND_WORK_ITEM_URL for a Jira-sourced run" >&2
+    exit 1
+  fi
+  ISSUE_URL="${FULLSEND_WORK_ITEM_URL}"
 fi
 
 : "${ISSUE_URL:?ISSUE_URL must be set}"

@@ -3259,6 +3259,7 @@ JIRA_INT_TMPDIR="$(mktemp -d)"
 JIRA_INT_MOCK_BIN="${JIRA_INT_TMPDIR}/bin"
 JIRA_INT_FULLSEND_LOG="${JIRA_INT_TMPDIR}/fullsend.log"
 JIRA_INT_FORGE_LOG="${JIRA_INT_TMPDIR}/forge.log"
+JIRA_INT_PRECOMMIT_LOG="${JIRA_INT_TMPDIR}/precommit.log"
 mkdir -p "${JIRA_INT_MOCK_BIN}"
 JIRA_REAL_GIT="$(which git)"
 
@@ -3346,6 +3347,15 @@ fi
 MOCKEOF
 chmod +x "${JIRA_INT_MOCK_BIN}/fullsend"
 
+# pre-commit stand-in. Records whether the Jira credentials are visible to
+# hooks (it runs repo-controlled code in the real tool).
+cat > "${JIRA_INT_MOCK_BIN}/pre-commit" <<MOCKEOF
+#!/usr/bin/env bash
+echo "pre-commit jira-token=\${JIRA_TOKEN:-unset} jira-email=\${JIRA_USER_EMAIL:-unset}" >> "${JIRA_INT_PRECOMMIT_LOG}"
+exit 0
+MOCKEOF
+chmod +x "${JIRA_INT_MOCK_BIN}/pre-commit"
+
 setup_jira_int_repo() {
   local run_dir="$1"
   local branch_name="$2"
@@ -3358,6 +3368,12 @@ setup_jira_int_repo() {
   ${JIRA_REAL_GIT} -C "${repo_dir}" add README.md
   ${JIRA_REAL_GIT} -C "${repo_dir}" commit -q -m "init"
   ${JIRA_REAL_GIT} -C "${repo_dir}" push -q origin main
+  if [ -n "${JIRA_INT_WITH_PRECOMMIT:-}" ]; then
+    printf 'repos: []\n' > "${repo_dir}/.pre-commit-config.yaml"
+    ${JIRA_REAL_GIT} -C "${repo_dir}" add .pre-commit-config.yaml
+    ${JIRA_REAL_GIT} -C "${repo_dir}" commit -q -m "chore: pre-commit config"
+    ${JIRA_REAL_GIT} -C "${repo_dir}" push -q origin main
+  fi
   ${JIRA_REAL_GIT} -C "${repo_dir}" checkout -q -b "${branch_name}"
   echo "changed content" > "${repo_dir}/file.txt"
   ${JIRA_REAL_GIT} -C "${repo_dir}" add -f file.txt
@@ -3446,6 +3462,22 @@ if ! grep -qF -- "--jira-email fullsend-bot@example.com" "${JIRA_INT_FULLSEND_LO
   jira_int_fail "jira-stage-update-bot-identity" "write did not use the configured Jira account, or the token was passed on the command line"
 else
   echo "PASS: jira-stage-update-bot-identity"
+fi
+
+# Jira credentials are withheld from pre-commit hooks (repo-controlled code)
+# but still reach the Jira stage update afterwards.
+: > "${JIRA_INT_PRECOMMIT_LOG}"
+JIRA_INT_WITH_PRECOMMIT=1 run_jira_int "jira-precommit-hidden" github
+if [ "${JIRA_INT_RC}" -ne 0 ]; then
+  jira_int_fail "jira-token-hidden-from-precommit" "post-code failed"
+elif ! grep -q "^pre-commit " "${JIRA_INT_PRECOMMIT_LOG}"; then
+  jira_int_fail "jira-token-hidden-from-precommit" "pre-commit did not run"
+elif ! grep -qF "pre-commit jira-token=unset jira-email=unset" "${JIRA_INT_PRECOMMIT_LOG}"; then
+  jira_int_fail "jira-token-hidden-from-precommit" "Jira credentials visible to pre-commit hooks"
+elif ! grep -qF "env-token=fake-jira-token" "${JIRA_INT_FULLSEND_LOG}"; then
+  jira_int_fail "jira-token-hidden-from-precommit" "Jira credentials not restored for the stage update"
+else
+  echo "PASS: jira-token-hidden-from-precommit"
 fi
 
 # GitLab target: MR on GitLab (host from CI_SERVER_HOST, since ISSUE_URL is the

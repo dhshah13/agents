@@ -3752,6 +3752,14 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Auto-install pre-commit tool dependencies
 # ---------------------------------------------------------------------------
+# Withhold the Jira credentials while repo-controlled hooks and tool installs
+# run: they execute code from the working tree and would otherwise inherit the
+# token. post_jira_stage_update (below) is the only consumer; restore them
+# after the pre-commit gate.
+_jira_token_saved="${JIRA_TOKEN-}"
+_jira_email_saved="${JIRA_USER_EMAIL-}"
+unset JIRA_TOKEN JIRA_USER_EMAIL
+
 precommit_install_deps "${TARGET_BRANCH}"
 export PATH="${HOME}/.local/bin:${PATH}"
 
@@ -3766,6 +3774,11 @@ while IFS= read -r _changed_line; do
 done <<< "${CHANGED_FILES}"
 
 precommit_run_gate changed_array "${SCAN_RANGE}" "${TARGET_BRANCH}" "${MERGE_BASE}"
+
+# Hooks have finished; restore the Jira credentials for the stage update.
+if [ -n "${_jira_token_saved}" ]; then export JIRA_TOKEN="${_jira_token_saved}"; fi
+if [ -n "${_jira_email_saved}" ]; then export JIRA_USER_EMAIL="${_jira_email_saved}"; fi
+unset _jira_token_saved _jira_email_saved
 
 if [ "${PRECOMMIT_GATE_SECRET_FAIL}" = "true" ]; then
   post_fail_to_issue secret-scan "${POST_FAILURE_SECRET_SCAN_MESSAGE}"

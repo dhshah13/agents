@@ -2680,7 +2680,9 @@ WI_URL="https://test.atlassian.net/browse/TESTPROJ-42"
 for case_spec in \
   "jira-work-item-key-mismatch-fails|FULLSEND_WORK_ITEM_KEY=TESTPROJ-7" \
   "jira-work-item-tracker-conflict-fails|FULLSEND_TRACKER=github" \
-  "jira-work-item-issue-url-conflict-fails|ISSUE_URL=https://test.atlassian.net/browse/TESTPROJ-43"; do
+  "jira-work-item-issue-url-conflict-fails|ISSUE_URL=https://test.atlassian.net/browse/TESTPROJ-43" \
+  "jira-work-item-empty-key-fails|FULLSEND_WORK_ITEM_KEY=" \
+  "jira-work-item-empty-url-fails|FULLSEND_WORK_ITEM_URL="; do
   case_name="${case_spec%%|*}"
   case_env="${case_spec#*|}"
   # shellcheck disable=SC2030,SC2031
