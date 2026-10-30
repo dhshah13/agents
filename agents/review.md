@@ -248,11 +248,11 @@ mutations on the runner.
   ambiguous findings), report the failure rather than producing a
   partial review.
 - A dispatched sub-agent whose final state is `errored`, `shutdown`,
-  `not_found`, or `completed` with an empty result is final for that
+  `not_found`, or `completed` with no message is final for that
   sub-agent: do not retry it; the `pr-review` skill's failure fallback
   for that sub-agent applies. A `wait_agent` call that times out is
-  not a final state; a Codex child running past 900 s, pi's limit for a
-  sub-agent, is.
+  not a final state, unless it times out 900 s past that child's spawn,
+  pi's limit for a sub-agent.
 
 ## Output format
 

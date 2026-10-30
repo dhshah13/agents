@@ -83,7 +83,7 @@ Follow these steps in order. Do not skip steps.
 The runner kills the sandbox at the harness `timeout_minutes` with no
 wrap-up: a review that has not written `agent-result.json` by then
 posts nothing. The harness mirrors that value into `TIMEOUT_SECONDS`;
-skip every time check when it is unset.
+skip the checkpoints when it is unset.
 
 Before anything else in step 1: `date +%s > /sandbox/workspace/agent-start`
 (a file: shell variables do not survive between Bash calls). The
@@ -438,8 +438,8 @@ incident.
    - **pi, persona not listed:** `subagent_type`: `Explore` (read-only),
      no `model`.
    - **Codex roster:** `agent_type`: `security-triage` when listed, else
-     `explore` (instruction-only; not an enforced read-only tool set).
-     Wait for it and close it before step 3d.
+     `explore` (instruction-only). Wait for it and close it before
+     step 3d.
 
    It runs **synchronously** (its output feeds step 3d).
 
@@ -828,9 +828,9 @@ here):
    - **Codex roster** (a codex note listing `Registered sub-agent
      roles:`; without it, follow the note): `spawn_agent`, `message` =
      the prompt, `agent_type` = the persona name when listed, else
-     omit it, `fork_context: false`, no `model` (bound from
-     `agents[].subagents`); `wait_agent` with `timeout_ms` ≤ 120000.
-     A denied spawn: the note's rule.
+     omit it, `fork_context: false`, no `model`; `wait_agent` with
+     `timeout_ms` ≤ 120000. Run `date +%s` after each spawn and at each
+     timed-out wait. A denied spawn: the note's rule.
 
 **Start every selected sub-agent**; no dispatch limit drops one.
 
@@ -839,10 +839,10 @@ here):
   for all; apply the Time budget checkpoint as each returns.
 - **Codex roster:** at most four open. Start up to four; `wait_agent`
   on one, collect, `close_agent` it, start the next; repeat until all
-  are collected and closed. A timed-out wait is no result: run the
-  Time budget checkpoint, wait again. `errored`, `shutdown`,
-  `not_found`, `completed` with an empty result, or running past
-  900 s is final: close it and apply the failure fallback
+  are closed. A timed-out wait is no result: after the Time budget
+  checkpoint, call it again on the next open child. `errored`,
+  `shutdown`, `not_found`, `completed` with no message, or timed out
+  900 s past its spawn is final: close it and apply the failure fallback
   (3c-1 item 6, 3c-2, step 5, 6d item 4). Under 240 s, even with one
   step 4 child running, close all and write the `time-budget` failure.
 
