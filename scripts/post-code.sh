@@ -3460,8 +3460,15 @@ post_jira_stage_update() {
     gha_echo error "JIRA_BASE_URL does not match the Jira host in FULLSEND_WORK_ITEM_URL"
     return 1
   fi
-  if [ -z "${JIRA_USER_EMAIL:-}" ] || [ -z "${JIRA_TOKEN:-}" ]; then
+  # The credentials were withheld from the environment earlier in the run
+  # (see the note after the branch checks); they are passed to the trusted
+  # CLI below and nowhere else.
+  if [ -z "${_jira_email_saved:-}" ] || [ -z "${_jira_token_saved:-}" ]; then
     gha_echo error "JIRA_USER_EMAIL and JIRA_TOKEN are required to write to Jira"
+    return 1
+  fi
+  if [ -z "${_jira_fullsend_bin:-}" ]; then
+    gha_echo error "fullsend CLI not found; cannot write to Jira"
     return 1
   fi
 
@@ -3477,9 +3484,9 @@ Review and merge happen on the ${noun}."
 
   # The token reaches the CLI through its default JIRA_TOKEN env var rather
   # than a command-line flag, keeping it out of the process list.
-  printf '%s' "${body}" | JIRA_TOKEN="${JIRA_TOKEN}" fullsend issues post-comment \
+  printf '%s' "${body}" | JIRA_TOKEN="${_jira_token_saved}" "${_jira_fullsend_bin}" issues post-comment \
     --tracker jira --project "${project}" --number "${number}" \
-    --jira-url "${jira_url}" --jira-email "${JIRA_USER_EMAIL}" \
+    --jira-url "${jira_url}" --jira-email "${_jira_email_saved}" \
     --marker "<!-- fullsend:code-agent -->" --result -
 }
 
@@ -3629,6 +3636,16 @@ BRANCH="${SAFE_BRANCH}"
 echo "Branch: ${BRANCH}"
 echo "Token source: ${PUSH_TOKEN_SOURCE:-unknown}"
 
+# Withhold the Jira credentials from everything that can run repo-controlled
+# code (commit/push hooks, pre-commit tool installs and hooks). They are
+# restored only inside post_jira_stage_update, for the single Jira write.
+# Resolve the trusted tracker CLI now, before repo-controlled installs can
+# put a binary of the same name earlier on PATH.
+_jira_token_saved="${JIRA_TOKEN-}"
+_jira_email_saved="${JIRA_USER_EMAIL-}"
+_jira_fullsend_bin="$(command -v fullsend 2>/dev/null || true)"
+unset JIRA_TOKEN JIRA_USER_EMAIL
+
 # ---------------------------------------------------------------------------
 # 2. Compute changed files
 # ---------------------------------------------------------------------------
@@ -3752,14 +3769,6 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Auto-install pre-commit tool dependencies
 # ---------------------------------------------------------------------------
-# Withhold the Jira credentials while repo-controlled hooks and tool installs
-# run: they execute code from the working tree and would otherwise inherit the
-# token. post_jira_stage_update (below) is the only consumer; restore them
-# after the pre-commit gate.
-_jira_token_saved="${JIRA_TOKEN-}"
-_jira_email_saved="${JIRA_USER_EMAIL-}"
-unset JIRA_TOKEN JIRA_USER_EMAIL
-
 precommit_install_deps "${TARGET_BRANCH}"
 export PATH="${HOME}/.local/bin:${PATH}"
 
@@ -3774,11 +3783,6 @@ while IFS= read -r _changed_line; do
 done <<< "${CHANGED_FILES}"
 
 precommit_run_gate changed_array "${SCAN_RANGE}" "${TARGET_BRANCH}" "${MERGE_BASE}"
-
-# Hooks have finished; restore the Jira credentials for the stage update.
-if [ -n "${_jira_token_saved}" ]; then export JIRA_TOKEN="${_jira_token_saved}"; fi
-if [ -n "${_jira_email_saved}" ]; then export JIRA_USER_EMAIL="${_jira_email_saved}"; fi
-unset _jira_token_saved _jira_email_saved
 
 if [ "${PRECOMMIT_GATE_SECRET_FAIL}" = "true" ]; then
   post_fail_to_issue secret-scan "${POST_FAILURE_SECRET_SCAN_MESSAGE}"

@@ -3378,6 +3378,14 @@ setup_jira_int_repo() {
   echo "changed content" > "${repo_dir}/file.txt"
   ${JIRA_REAL_GIT} -C "${repo_dir}" add -f file.txt
   ${JIRA_REAL_GIT} -C "${repo_dir}" commit -q -m "fix: test change"
+  if [ -n "${JIRA_INT_PREPUSH_HOOK:-}" ]; then
+    cat > "${repo_dir}/.git/hooks/pre-push" <<HOOKEOF
+#!/usr/bin/env bash
+echo "pre-push jira-token=\${JIRA_TOKEN:-unset} jira-email=\${JIRA_USER_EMAIL:-unset}" >> "${JIRA_INT_PREPUSH_HOOK}"
+exit 0
+HOOKEOF
+    chmod +x "${repo_dir}/.git/hooks/pre-push"
+  fi
 }
 
 # Run post-code for a Jira-sourced work item on the given code host. Extra
@@ -3478,6 +3486,38 @@ elif ! grep -qF "env-token=fake-jira-token" "${JIRA_INT_FULLSEND_LOG}"; then
   jira_int_fail "jira-token-hidden-from-precommit" "Jira credentials not restored for the stage update"
 else
   echo "PASS: jira-token-hidden-from-precommit"
+fi
+
+# A pre-push hook (repo-controlled code that runs during the plain git push)
+# does not see the Jira credentials either, and a `fullsend` binary dropped in
+# ${HOME}/.local/bin (put first on PATH by the script) does not shadow the
+# trusted CLI used for the Jira write.
+JIRA_INT_PREPUSH_LOG="${JIRA_INT_TMPDIR}/prepush.log"
+JIRA_INT_SHADOW_LOG="${JIRA_INT_TMPDIR}/shadow.log"
+: > "${JIRA_INT_PREPUSH_LOG}"
+: > "${JIRA_INT_SHADOW_LOG}"
+mkdir -p "${JIRA_INT_TMPDIR}/.local/bin"
+cat > "${JIRA_INT_TMPDIR}/.local/bin/fullsend" <<SHADOWEOF
+#!/usr/bin/env bash
+echo "shadow fullsend called token=\${JIRA_TOKEN:-unset}" >> "${JIRA_INT_SHADOW_LOG}"
+exit 0
+SHADOWEOF
+chmod +x "${JIRA_INT_TMPDIR}/.local/bin/fullsend"
+JIRA_INT_PREPUSH_HOOK="${JIRA_INT_PREPUSH_LOG}" run_jira_int "jira-prepush-hidden" github
+rm -rf "${JIRA_INT_TMPDIR}/.local"
+if [ "${JIRA_INT_RC}" -ne 0 ]; then
+  jira_int_fail "jira-token-hidden-from-prepush-hook" "post-code failed"
+elif ! grep -q "^pre-push " "${JIRA_INT_PREPUSH_LOG}"; then
+  jira_int_fail "jira-token-hidden-from-prepush-hook" "pre-push hook did not run"
+elif ! grep -qF "pre-push jira-token=unset jira-email=unset" "${JIRA_INT_PREPUSH_LOG}"; then
+  jira_int_fail "jira-token-hidden-from-prepush-hook" "Jira credentials visible to a pre-push hook"
+elif [ -s "${JIRA_INT_SHADOW_LOG}" ]; then
+  jira_int_fail "jira-path-shadowed-fullsend-not-used" "a binary from the repo-controlled PATH entry received the Jira write"
+elif ! grep -qF "env-token=fake-jira-token" "${JIRA_INT_FULLSEND_LOG}"; then
+  jira_int_fail "jira-path-shadowed-fullsend-not-used" "trusted fullsend CLI was not used for the Jira write"
+else
+  echo "PASS: jira-token-hidden-from-prepush-hook"
+  echo "PASS: jira-path-shadowed-fullsend-not-used"
 fi
 
 # GitLab target: MR on GitLab (host from CI_SERVER_HOST, since ISSUE_URL is the
