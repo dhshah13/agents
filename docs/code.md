@@ -18,6 +18,8 @@ No additional setup is required beyond the standard fullsend configuration.
 
 The code agent is triggered when the `ready-to-code` label is applied to an issue, or via the `/fs-code` command.
 
+The harness also declares a CEL `trigger:` for fullsend's harness dispatch: the `ready-to-code` label added to a work item (by a human or a bot), or `/fs-code` from a human on a work item. Work items can be GitHub issues, GitLab issues or Jira issues, so a Jira poller that dispatches the code agent matches the same events; PR and MR comments do not match. Dispatch does not evaluate it for the built-in code agent on GitHub or GitLab yet, so the routing above is what runs there today.
+
 ## Commands
 
 | Command | Where | Effect |
