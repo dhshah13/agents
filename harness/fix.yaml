@@ -38,11 +38,14 @@ slug: fullsend-ai-coder
 # lookup) does not match. The review path also honors the fullsend-no-fix
 # opt-out label and runs only on a bot-authored PR or one labeled
 # fullsend-fix. Dispatch authorizes bot reviews without a role threshold
-# and leaves the bot identity to this expression; the -review[bot] suffix
+# and this expression only checks the -review[bot] login suffix (which
 # covers <org>-review[bot], fullsend-ai-review[bot] and
-# <app-set>-review[bot]. The exact per-org bot name and the write
-# permission of a human PR author cannot be expressed here and stay with
-# the dispatch workflow. A GitHub PR comment arrives as a work_item with
+# <app-set>-review[bot]) plus actor.kind == "bot". That suffix is a coarse
+# filter, not a trust check: any GitHub App whose login ends in
+# -review[bot] passes it. The exact per-org review bot identity and the
+# write permission of a human PR author cannot be expressed here and must
+# stay with the dispatch workflow; do not rely on this expression alone to
+# authenticate the reviewer. A GitHub PR comment arrives as a work_item with
 # entity.linked_change_proposal set, a GitLab MR note as a change_proposal.
 # harness/triggertest/trigger_test.go evaluates this against the
 # NormalizedEvent fixtures.
