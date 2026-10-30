@@ -497,6 +497,25 @@ if [ "${NO_PUSH}" = "false" ]; then
     fi
     rm -f "${MERGE_DIFF_TMP}" "${MERGE_ADDED_TMP}"
   fi
+
+  # Commit messages. `gitleaks detect --pipe` of the added lines above (and
+  # the patch-based history scan) never sees commit messages, so scan them
+  # separately — including merge commit messages, which were scanned as a
+  # side effect of piping the raw `git show` output before issue #1801.
+  # Materialize to a file for the same SIGPIPE reason as above.
+  COMMIT_MSG_TMP="$(mktemp)"
+  if ! git log --first-parent --no-color --format=%B "${SCAN_RANGE}" > "${COMMIT_MSG_TMP}" 2>&1; then
+    COMMIT_MSG_OUTPUT="$(cat "${COMMIT_MSG_TMP}")"
+    rm -f "${COMMIT_MSG_TMP}"
+    print_sanitized_gha_log "${COMMIT_MSG_OUTPUT}" stderr
+    post_fail_to_pr setup-error "Could not read commit messages in ${SCAN_RANGE} for the authoritative secret scan"
+  fi
+  if ! COMMIT_MSG_GITLEAKS_OUTPUT="$(gitleaks detect --pipe --redact < "${COMMIT_MSG_TMP}" 2>&1)"; then
+    rm -f "${COMMIT_MSG_TMP}"
+    print_sanitized_gha_log "${COMMIT_MSG_GITLEAKS_OUTPUT}" stderr
+    post_fail_to_pr secret-scan "${POST_FAILURE_SECRET_SCAN_MESSAGE}"
+  fi
+  rm -f "${COMMIT_MSG_TMP}"
   echo "Secret scan passed — no leaks in agent's commit(s)"
 
   # -------------------------------------------------------------------------

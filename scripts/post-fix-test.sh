@@ -6337,6 +6337,8 @@ run_patch_added_lines_test "patch-added-lines-multi-file-headers" \
 #   added    — introduced by the resolution                    -> secret-scan
 #   moved    — removed from file.txt, re-added in moved.txt    -> secret-scan
 #   followup — absent from the merge, added by a later commit  -> secret-scan
+#   message  — only in the merge commit's message              -> secret-scan
+#   fixmsg   — only in a follow-up commit's message            -> secret-scan
 run_push_forge_conflict_merge_secret_lines_test() {
   local mode="$1"
   local expect="$2"
@@ -6387,11 +6389,19 @@ run_push_forge_conflict_merge_secret_lines_test() {
     *) printf 'alpha\nresolved\nomega\n' > "${base}/repo/file.txt" ;;
   esac
   git -C "${base}/repo" add file.txt
-  git -C "${base}/repo" commit -q --no-edit
+  if [ "${mode}" = "message" ]; then
+    git -C "${base}/repo" commit -q -m "Merge origin/main: sekrit"
+  else
+    git -C "${base}/repo" commit -q --no-edit
+  fi
   if [ "${mode}" = "followup" ]; then
     echo "sekrit" > "${base}/repo/followup.txt"
     git -C "${base}/repo" add followup.txt
     git -C "${base}/repo" commit -q -m "fix: agent change"
+  elif [ "${mode}" = "fixmsg" ]; then
+    echo "fixed" > "${base}/repo/fixed.txt"
+    git -C "${base}/repo" add fixed.txt
+    git -C "${base}/repo" commit -q -m "fix: agent change sekrit"
   fi
 
   # Fixture validity: the raw combined diff must carry the secret as
@@ -6552,6 +6562,8 @@ run_push_forge_conflict_merge_secret_lines_test deleted pass
 run_push_forge_conflict_merge_secret_lines_test added fail
 run_push_forge_conflict_merge_secret_lines_test moved fail
 run_push_forge_conflict_merge_secret_lines_test followup fail
+run_push_forge_conflict_merge_secret_lines_test message fail
+run_push_forge_conflict_merge_secret_lines_test fixmsg fail
 run_push_blocked_mergeability_does_not_skip_test
 
 rm -rf "${PUSH_REBASE_TMPDIR}"
