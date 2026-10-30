@@ -6443,6 +6443,8 @@ run_patch_added_lines_test "patch-added-lines-multi-file-headers" \
 #   followup — absent from the merge, added by a later commit  -> secret-scan
 #   message  — only in the merge commit's message              -> secret-scan
 #   fixmsg   — only in a follow-up commit's message            -> secret-scan
+#   author   — only in the merge commit's author identity      -> secret-scan
+#   committer — only in a follow-up commit's committer identity -> secret-scan
 run_push_forge_conflict_merge_secret_lines_test() {
   local mode="$1"
   local expect="$2"
@@ -6495,6 +6497,8 @@ run_push_forge_conflict_merge_secret_lines_test() {
   git -C "${base}/repo" add file.txt
   if [ "${mode}" = "message" ]; then
     git -C "${base}/repo" commit -q -m "Merge origin/main: sekrit"
+  elif [ "${mode}" = "author" ]; then
+    git -C "${base}/repo" commit -q --no-edit --author="sekrit <sekrit@example.com>"
   else
     git -C "${base}/repo" commit -q --no-edit
   fi
@@ -6506,6 +6510,11 @@ run_push_forge_conflict_merge_secret_lines_test() {
     echo "fixed" > "${base}/repo/fixed.txt"
     git -C "${base}/repo" add fixed.txt
     git -C "${base}/repo" commit -q -m "fix: agent change sekrit"
+  elif [ "${mode}" = "committer" ]; then
+    echo "fixed" > "${base}/repo/fixed.txt"
+    git -C "${base}/repo" add fixed.txt
+    GIT_COMMITTER_NAME="sekrit" GIT_COMMITTER_EMAIL="sekrit@example.com" \
+      git -C "${base}/repo" commit -q -m "fix: agent change"
   fi
 
   # Fixture validity: the raw combined diff must carry the secret as
@@ -6668,6 +6677,8 @@ run_push_forge_conflict_merge_secret_lines_test moved fail
 run_push_forge_conflict_merge_secret_lines_test followup fail
 run_push_forge_conflict_merge_secret_lines_test message fail
 run_push_forge_conflict_merge_secret_lines_test fixmsg fail
+run_push_forge_conflict_merge_secret_lines_test author fail
+run_push_forge_conflict_merge_secret_lines_test committer fail
 run_push_blocked_mergeability_does_not_skip_test
 
 rm -rf "${PUSH_REBASE_TMPDIR}"

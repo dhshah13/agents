@@ -502,9 +502,11 @@ if [ "${NO_PUSH}" = "false" ]; then
   # the patch-based history scan) never sees commit messages, so scan them
   # separately — including merge commit messages, which were scanned as a
   # side effect of piping the raw `git show` output before issue #1801.
+  # Author and committer identity are scanned alongside each message: no
+  # other check sees them, and %B alone omits them (issue #1845).
   # Materialize to a file for the same SIGPIPE reason as above.
   COMMIT_MSG_TMP="$(mktemp)"
-  if ! git log --first-parent --no-color --format=%B "${SCAN_RANGE}" > "${COMMIT_MSG_TMP}" 2>&1; then
+  if ! git log --first-parent --no-color --format='%an <%ae>%n%cn <%ce>%n%B' "${SCAN_RANGE}" > "${COMMIT_MSG_TMP}" 2>&1; then
     COMMIT_MSG_OUTPUT="$(cat "${COMMIT_MSG_TMP}")"
     rm -f "${COMMIT_MSG_TMP}"
     print_sanitized_gha_log "${COMMIT_MSG_OUTPUT}" stderr
