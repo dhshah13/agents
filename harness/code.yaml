@@ -29,6 +29,31 @@ providers:
 role: coder
 slug: fullsend-ai-coder
 
+# CEL dispatch trigger (docs/guides/user/cel-triggers-reference.md in
+# fullsend). Matches the event selection of the code routing in fullsend's
+# reusable-dispatch.yml: a /fs-code comment from a human on a work item, or
+# the ready-to-code label added to a work item, by a human or a bot (triage
+# applies it on promotion). Work items come from GitHub issues, GitLab
+# issues or Jira, so a Jira poller that dispatches code matches the same
+# events. A GitHub PR comment arrives as a work_item with
+# entity.linked_change_proposal set, and a GitLab MR note as a
+# change_proposal; neither matches, as /fs-code is for issues only.
+# Authorization stays with the platform gate and its per-harness threshold,
+# so this expression has no role checks.
+# harness/triggertest/trigger_test.go evaluates this against the
+# NormalizedEvent fixtures.
+trigger: >
+  event.entity.kind == "work_item"
+    && !has(event.entity.linked_change_proposal)
+    && event.source.system in ["github", "gitlab", "jira"]
+    && ((event.transition.kind == "comment_added"
+        && has(event.transition.comment.command)
+        && event.transition.comment.command == "/fs-code"
+        && event.actor.kind == "human")
+      || (event.transition.kind == "label_changed"
+        && event.transition.label.name == "ready-to-code"
+        && event.transition.label.action == "added"))
+
 host_files:
   - src: env/gcp-vertex.env
     dest: /sandbox/workspace/.env.d/gcp-vertex.env
